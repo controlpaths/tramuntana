@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tramuntana - hardware hacking console</title>
+  <link rel="icon" href="img/logo.png">
+  <link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <img src="img/logo.png" alt="" class="brand-logo">
+    <div class="brand-text">
+      <span class="brand-name">TRAMUNTANA</span>
+      <span class="brand-sub">hardware hacking console</span>
+    </div>
+  </div>
+  <div class="conn">
+    <span id="conn-status" class="status status-off">DISCONNECTED</span>
+    <button id="btn-connect" class="btn btn-primary">CONNECT</button>
+    <button id="btn-disconnect" class="btn" hidden>DISCONNECT</button>
+  </div>
+</header>
+
+<div id="unsupported" class="banner banner-error" hidden>
+  This browser has no Web Serial API. Use Chrome, Edge or Opera on desktop, served
+  from <code>http://localhost</code> or opened as <code>file://</code>.
+</div>
+<div id="conn-error" class="banner banner-error" hidden></div>
+<div id="conn-hint" class="banner banner-hint" hidden>
+  Chrome lists all three of the board's serial ports (shell, API, UART bridge) -
+  pick the <b>second</b> one. Wrong pick? Just press CONNECT again.
+</div>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="system">SYSTEM</button>
+  <button class="tab" data-tab="spi">SPI</button>
+  <button class="tab" data-tab="i2c">I2C</button>
+  <button class="tab" data-tab="scope">SCOPE</button>
+  <button class="tab" data-tab="awg">AWG</button>
+  <button class="tab" data-tab="pwm">PWM</button>
+  <button class="tab" data-tab="logic">LOGIC</button>
+  <button class="tab" data-tab="uart">UART</button>
+  <button class="tab" data-tab="emu">EMU</button>
+  <button class="tab" data-tab="seq">SEQ</button>
+  <button class="tab" data-tab="timeline">TIMELINE</button>
+</nav>
+
+<main id="main" class="disconnected">
+
+  <!-- ============================================================= SYSTEM -->
+  <section class="panel active" data-panel="system">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Board <span class="hint">CMD_INFO</span></h2>
+        <div class="kv"><span>Firmware</span><b id="sys-fw">-</b></div>
+        <div class="kv"><span>Board</span><b id="sys-board">-</b></div>
+        <div class="kv"><span>System clock</span><b id="sys-sysclk">-</b></div>
+        <div class="kv"><span>Chip id</span><b id="sys-chip">-</b></div>
+        <div class="kv"><span>Protocol</span><b id="sys-proto">-</b></div>
+        <div class="kv"><span>Port</span><b id="sys-port">-</b></div>
+        <div class="btn-row" style="margin-top:12px">
+          <button id="btn-bootloader" class="btn btn-danger">REBOOT TO BOOTLOADER</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Power &amp; header</h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="switch sw-green">
+              <input type="checkbox" id="sys-power">
+              <span>Target 3.3V (J1.1)</span>
+            </label>
+            <label class="switch sw-blue">
+              <input type="checkbox" id="sys-pullups">
+              <span>I2C pull-ups (DIO6/7)</span>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>AIN0</span>
+              <div class="readout-row"><b id="sys-adc0">-</b><button id="btn-adc0" class="btn btn-sm">READ</button></div>
+            </label>
+            <label class="field">
+              <span>AIN1</span>
+              <div class="readout-row"><b id="sys-adc1">-</b><button id="btn-adc1" class="btn btn-sm">READ</button></div>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>Display note</span>
+              <div class="readout-row">
+                <input type="text" id="sys-display-text" maxlength="24" placeholder="up to 24 chars">
+                <button id="btn-display-send" class="btn btn-sm">SEND</button>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>RGB LED</h2>
+        <div class="led-row">
+          <button class="btn led-btn" data-colour="off">off</button>
+          <button class="btn led-btn" data-colour="red" style="--dot:#ff4d6d">red</button>
+          <button class="btn led-btn" data-colour="green" style="--dot:#4dff9a">green</button>
+          <button class="btn led-btn" data-colour="blue" style="--dot:#4da3ff">blue</button>
+          <button class="btn led-btn" data-colour="yellow" style="--dot:#ffe066">yellow</button>
+          <button class="btn led-btn" data-colour="cyan" style="--dot:#40f0e0">cyan</button>
+          <button class="btn led-btn" data-colour="magenta" style="--dot:#c86eff">magenta</button>
+          <button class="btn led-btn" data-colour="white" style="--dot:#ffffff">white</button>
+          <button class="btn led-btn btn-primary" data-colour="auto">auto</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>DIO header <span class="hint">plain GPIO, bit i = DIOi</span></h2>
+        <table class="dio-table">
+          <thead><tr><th></th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th></tr></thead>
+          <tbody>
+            <tr><td>out</td><td colspan="8" id="dio-out-cells"></td></tr>
+            <tr><td>value</td><td colspan="8" id="dio-val-cells"></td></tr>
+            <tr><td>level</td><td colspan="8" id="dio-lvl-cells"></td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row">
+          <button id="btn-dio-dir" class="btn btn-sm">APPLY DIRECTION</button>
+          <button id="btn-dio-write" class="btn btn-sm">APPLY VALUES</button>
+          <button id="btn-dio-read" class="btn btn-sm">READ LEVELS</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Live status <span class="hint">CMD_STATUS, polled while this tab is open</span></h2>
+      <div class="pins-grid" id="pins-grid"></div>
+      <div class="status-grid">
+        <div class="stat"><span>SCOPE</span><b id="st-scope">-</b></div>
+        <div class="stat"><span>LOGIC</span><b id="st-logic">-</b></div>
+        <div class="stat"><span>AWG</span><b id="st-awg">-</b></div>
+        <div class="stat"><span>SPI SNIFF</span><b id="st-spi-sniff">-</b></div>
+        <div class="stat"><span>I2C SNIFF</span><b id="st-i2c-sniff">-</b></div>
+        <div class="stat"><span>UART BRIDGE</span><b id="st-uart-bridge">-</b></div>
+        <div class="stat"><span>RX DROPPED</span><b id="st-rx-dropped">-</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ SPI -->
+  <section class="panel" data-panel="spi">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Master <span class="hint">DIO2 CS &middot; DIO3 MISO &middot; DIO4 MOSI &middot; DIO5 SCK</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Frequency (Hz)</span><input type="text" id="spi-freq" value="1000000"></label>
+            <label class="field"><span>Mode</span>
+              <select id="spi-mode"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+            </label>
+            <label class="switch"><input type="checkbox" id="spi-lsb"><span>LSB first</span></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-spi-conf" class="btn">CONFIGURE</button>
+            <span class="hint">actual: <b id="spi-actual-freq">-</b></span>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Bytes (hex)</span><input type="text" id="spi-tx" value="9f 00 00 00" placeholder="9f 00 00 00"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Read count (READ / TXN)</span><input type="number" id="spi-read-n" value="3" min="0"></label>
+            <label class="field"><span>Fill byte (READ)</span><input type="text" id="spi-fill" value="00"></label>
+          </div>
+          <div class="btn-row wrap">
+            <button id="btn-spi-sel" class="btn">SEL</button>
+            <button id="btn-spi-unsel" class="btn">UNSEL</button>
+            <button id="btn-spi-write" class="btn">WRITE</button>
+            <button id="btn-spi-read" class="btn">READ</button>
+            <button id="btn-spi-xfer" class="btn btn-primary">XFER</button>
+            <button id="btn-spi-txn" class="btn btn-primary">TXN (sel+write+read+unsel)</button>
+          </div>
+          <div class="xfer-out">
+            <div class="hexrow"><span class="tag tag-tx">TX</span><code id="spi-tx-out">-</code></div>
+            <div class="hexrow"><span class="tag tag-rx">RX</span><code id="spi-rx-out">-</code></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Sniffer <span class="hint">passive, full duplex</span></h2>
+        <div class="btn-row">
+          <label class="switch sw-green"><input type="checkbox" id="spi-sniff-toggle"><span>listening</span></label>
+          <label class="field" style="max-width:100px"><span>mode</span>
+            <select id="spi-sniff-mode"><option value="">match conf</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+          </label>
+          <button id="btn-spi-sniff-clear" class="btn btn-sm">CLEAR</button>
+        </div>
+        <div class="sniff-log" id="spi-sniff-log"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ I2C -->
+  <section class="panel" data-panel="i2c">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Master <span class="hint">DIO6 SCL &middot; DIO7 SDA &middot; bit-banged</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Frequency (Hz)</span><input type="text" id="i2c-freq" value="400000"></label>
+            <label class="switch"><input type="checkbox" id="i2c-pullups" checked><span>pull-ups</span></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-i2c-conf" class="btn">CONFIGURE</button>
+            <span class="hint">actual: <b id="i2c-actual-freq">-</b></span>
+          </div>
+          <div class="btn-row">
+            <button id="btn-i2c-scan" class="btn btn-primary">SCAN BUS</button>
+            <span class="hint" id="i2c-scan-count"></span>
+          </div>
+          <div class="i2c-map" id="i2c-map"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Register access</h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Address (hex)</span><input type="text" id="i2c-addr" value="3c" maxlength="2"></label>
+            <label class="field"><span>Register (hex, optional)</span><input type="text" id="i2c-reg" placeholder="blank = plain"></label>
+            <label class="field"><span>Read n</span><input type="number" id="i2c-n" value="1" min="1" max="4096"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Write bytes (hex)</span><input type="text" id="i2c-wbytes" placeholder="00 ae d5 ..."></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-i2c-read" class="btn">READ</button>
+            <button id="btn-i2c-write" class="btn">WRITE</button>
+          </div>
+          <div class="hexrow"><span class="tag tag-rx">DATA</span><code id="i2c-out">-</code></div>
+
+          <h2 style="margin-top:16px">Low level <span class="hint">bus stays open between calls</span></h2>
+          <div class="field-row">
+            <label class="field"><span>addr_rw byte (hex)</span><input type="text" id="i2c-start-byte" placeholder="e.g. d1 = 0x68<<1|1"></label>
+            <button id="btn-i2c-start" class="btn btn-sm">START</button>
+            <button id="btn-i2c-stop" class="btn btn-sm">STOP</button>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>raw write (hex)</span><input type="text" id="i2c-raw-wbytes"></label>
+            <button id="btn-i2c-raw-write" class="btn btn-sm">WRITE</button>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>raw read n</span><input type="number" id="i2c-raw-n" value="1" min="1"></label>
+            <label class="switch"><input type="checkbox" id="i2c-raw-nack" checked><span>NAK last</span></label>
+            <button id="btn-i2c-raw-read" class="btn btn-sm">READ</button>
+          </div>
+          <div class="hexrow"><span class="tag tag-tx">LOW</span><code id="i2c-lowlevel-out">-</code></div>
+          <div class="btn-row"><button id="btn-i2c-reset" class="btn btn-sm">RESET BUS</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Sniffer <span class="hint">decodes START/ACK/DATA/STOP</span></h2>
+      <div class="btn-row">
+        <label class="switch sw-green"><input type="checkbox" id="i2c-sniff-toggle"><span>listening</span></label>
+        <label class="switch"><input type="checkbox" id="i2c-sniff-pullups"><span>enable pull-ups while sniffing</span></label>
+        <button id="btn-i2c-sniff-clear" class="btn btn-sm">CLEAR</button>
+      </div>
+      <div class="sniff-log" id="i2c-sniff-log"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================== SCOPE -->
+  <section class="panel" data-panel="scope">
+    <div class="scope-layout">
+      <div class="scope-plot-wrap">
+        <canvas id="scope-canvas"></canvas>
+        <div id="scope-cursor" class="scope-cursor" hidden></div>
+        <div id="scope-empty" class="scope-empty">no capture yet</div>
+      </div>
+      <aside class="scope-side">
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Samples</span><input type="number" id="scope-n" value="2048" min="1" max="16384"></label>
+            <label class="field"><span>Channels</span>
+              <select id="scope-ch"><option value="1">1 (AIN0)</option><option value="2">2 (AIN0+AIN1)</option></select>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Rate <small>(e.g. 500k, 500000)</small></span><input type="text" id="scope-rate" value="500k"></label>
+            <label class="field"><span>Pre-trigger</span><input type="number" id="scope-pre" value="0" min="0"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Trigger</span>
+              <select id="scope-trigger"><option value="none">none</option><option value="rising">rising</option><option value="falling">falling</option></select>
+            </label>
+            <label class="field"><span>Level (V)</span><input type="number" id="scope-level" value="1.65" step="0.01" min="0" max="3.3"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Timeout (ms)</span><input type="number" id="scope-timeout" value="5000" min="1"></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-scope-capture" class="btn btn-primary">CAPTURE</button>
+            <button id="btn-scope-abort" class="btn btn-danger">ABORT</button>
+          </div>
+          <div class="hint">state: <b id="scope-state">idle</b></div>
+        </div>
+
+        <div class="stats" id="scope-stats">
+          <div class="stat stat-ch0"><span>MIN / MAX ch0</span><b id="st-scope-mm0">-</b></div>
+          <div class="stat stat-ch1"><span>MIN / MAX ch1</span><b id="st-scope-mm1">-</b></div>
+          <div class="stat stat-ch0"><span>MEAN / RMS ch0</span><b id="st-scope-mr0">-</b></div>
+          <div class="stat stat-ch1"><span>MEAN / RMS ch1</span><b id="st-scope-mr1">-</b></div>
+          <div class="stat stat-ch0"><span>FREQ ch0</span><b id="st-scope-f0">-</b></div>
+          <div class="stat stat-ch1"><span>FREQ ch1</span><b id="st-scope-f1">-</b></div>
+        </div>
+        <div class="btn-row"><button id="btn-scope-csv" class="btn btn-sm">EXPORT CSV</button></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ================================================================ AWG -->
+  <section class="panel" data-panel="awg">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Waveform <span class="hint">AOUT0 &middot; PWM through the on-board RC filter</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Shape</span>
+              <select id="awg-shape">
+                <option value="sine">sine</option><option value="tri">triangle</option><option value="saw">sawtooth</option>
+                <option value="square">square</option><option value="stairs">stairs</option><option value="arb">arbitrary</option>
+              </select>
+            </label>
+            <label class="field"><span>Frequency (Hz)</span><input type="text" id="awg-freq" value="1000"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Amplitude (V, peak)</span><input type="number" id="awg-amp" value="1.0" step="0.01" min="0" max="3.3"></label>
+            <label class="field"><span>Offset (V)</span><input type="number" id="awg-offset" value="1.65" step="0.01" min="0" max="3.3"></label>
+            <label class="field" id="awg-param-field"><span id="awg-param-label">Duty %</span><input type="number" id="awg-param" value="50" min="0" max="256"></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-awg-set" class="btn btn-primary">SET</button>
+            <button id="btn-awg-off" class="btn btn-danger">OFF</button>
+          </div>
+          <div class="hint" id="awg-status">stopped</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>DC / step</h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>DC level (V)</span><input type="number" id="awg-dc-volts" value="1.65" step="0.01" min="0" max="3.3"></label>
+            <button id="btn-awg-dc" class="btn btn-sm">APPLY</button>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>From (V)</span><input type="number" id="awg-step-from" value="0" step="0.01" min="0" max="3.3"></label>
+            <label class="field"><span>To (V)</span><input type="number" id="awg-step-to" value="3.3" step="0.01" min="0" max="3.3"></label>
+            <label class="field"><span>Delay (ms)</span><input type="number" id="awg-step-ms" value="500" min="0"></label>
+            <button id="btn-awg-step" class="btn btn-sm">APPLY</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Arbitrary table <span class="hint">up to 4096 samples, -1..1</span></h2>
+      <div class="form">
+        <textarea id="awg-arb-samples" rows="3" placeholder="comma or newline separated, e.g. 0, 0.7, 1, 0.7, 0, -0.7, -1, -0.7"></textarea>
+        <div class="btn-row">
+          <button id="btn-awg-arb-sine" class="btn btn-sm">FILL WITH ONE SINE PERIOD (64 pts)</button>
+          <button id="btn-awg-arb-load" class="btn btn-primary">LOAD &amp; PLAY (uses shape/freq/amp/offset above)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ PWM -->
+  <section class="panel" data-panel="pwm">
+    <div class="card">
+      <h2>PWM outputs <span class="hint">hardware PWM on the DIO header &middot; each pair shares one slice: same frequency and phase, own duty and polarity</span></h2>
+      <div class="btn-row">
+        <button id="btn-pwm-sync" class="btn btn-primary">SYNC ALL (apply phases)</button>
+        <button id="btn-pwm-stop-all" class="btn btn-danger">STOP ALL</button>
+        <button id="btn-pwm-refresh" class="btn btn-sm">REFRESH</button>
+      </div>
+      <div class="hint">SYNC restarts every running pair on the same clock edge, each delayed by its phase. Pairs at the same (or an integer-ratio) frequency keep that alignment for good. Changing a running pair's frequency restarts it.</div>
+    </div>
+    <div class="grid-2" id="pwm-pairs"></div>
+  </section>
+
+  <!-- ============================================================== LOGIC -->
+  <section class="panel" data-panel="logic">
+    <div class="scope-layout">
+      <div class="scope-plot-wrap">
+        <canvas id="logic-canvas"></canvas>
+        <div id="logic-cursor" class="scope-cursor" hidden></div>
+        <div id="logic-empty" class="scope-empty">no capture yet</div>
+      </div>
+      <aside class="scope-side">
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Samples</span><input type="number" id="logic-n" value="16384" min="1" max="131072"></label>
+            <label class="field"><span>Rate <small>(e.g. 150M, 25M)</small></span><input type="text" id="logic-rate" value="150M"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Trigger</span>
+              <select id="logic-trigger"><option value="none">none</option><option value="rising">rising</option><option value="falling">falling</option><option value="pattern">pattern</option></select>
+            </label>
+            <label class="field" id="logic-pin-field"><span>Pin (edge)</span><input type="number" id="logic-pin" value="0" min="0" max="7"></label>
+          </div>
+          <div class="field-row" id="logic-pattern-fields" hidden>
+            <label class="field"><span>Mask (hex)</span><input type="text" id="logic-mask" value="01"></label>
+            <label class="field"><span>Value (hex)</span><input type="text" id="logic-value" value="00"></label>
+          </div>
+          <div class="field-row">
+            <label class="field" id="logic-pre-field"><span>Pre-trigger</span><input type="number" id="logic-pre" value="0" min="0"></label>
+            <label class="field"><span>Timeout (ms)</span><input type="number" id="logic-timeout" value="5000" min="1"></label>
+          </div>
+          <div class="hint">pattern trigger and pre-trigger are capped at 15 MS/s; edge/none without pre-trigger reach 150 MS/s</div>
+          <div class="btn-row">
+            <button id="btn-logic-capture" class="btn btn-primary">CAPTURE</button>
+            <button id="btn-logic-abort" class="btn btn-danger">ABORT</button>
+          </div>
+          <div class="hint">state: <b id="logic-state">idle</b></div>
+        </div>
+        <div class="form">
+          <div class="btn-row">
+            <button id="btn-logic-zoom-in" class="btn btn-sm">ZOOM +</button>
+            <button id="btn-logic-zoom-out" class="btn btn-sm">ZOOM &minus;</button>
+            <button id="btn-logic-fit" class="btn btn-sm">FIT</button>
+          </div>
+          <div class="hint">view: <b id="logic-view">-</b></div>
+          <div class="hint">wheel zooms at the pointer, drag or shift+wheel pans, double-click fits</div>
+        </div>
+        <div class="card" style="padding:10px">
+          <div id="logic-transitions" class="transitions-grid"></div>
+        </div>
+        <div class="btn-row">
+          <button id="btn-logic-vcd" class="btn btn-sm">EXPORT VCD</button>
+          <button id="btn-logic-csv" class="btn btn-sm">EXPORT CSV</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- =============================================================== UART -->
+  <section class="panel" data-panel="uart">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Bridge <span class="hint">DIO0 RX &middot; DIO1 TX &middot; auto-on with DTR</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Mode</span>
+              <select id="uart-mode"><option value="auto">auto (follows the terminal below)</option><option value="on">forced on</option><option value="off">off</option></select>
+            </label>
+            <label class="field"><span>Baud override <small>(0 = follow host)</small></span><input type="number" id="uart-baud-override" value="0" min="0"></label>
+          </div>
+          <div class="btn-row"><button id="btn-uart-apply" class="btn">APPLY</button></div>
+          <div class="kv"><span>active</span><b id="uart-st-active">-</b></div>
+          <div class="kv"><span>baud</span><b id="uart-st-baud">-</b></div>
+          <div class="kv"><span>rx / tx bytes</span><b id="uart-st-bytes">-</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Terminal <span class="hint">opens the board's third serial port directly</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Baud</span>
+              <select id="uart-term-baud">
+                <option>1200</option><option>2400</option><option>4800</option><option>9600</option>
+                <option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
+              </select>
+            </label>
+            <label class="field"><span>Send on Enter</span>
+              <select id="uart-term-lineend"><option value="none">nothing</option><option value="lf" selected>\n</option><option value="crlf">\r\n</option><option value="cr">\r</option></select>
+            </label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-uart-term-connect" class="btn btn-primary">CONNECT TERMINAL PORT</button>
+            <button id="btn-uart-term-disconnect" class="btn" hidden>DISCONNECT</button>
+          </div>
+          <div class="btn-row">
+            <label class="switch"><input type="checkbox" id="uart-term-dtr" disabled><span>DTR</span></label>
+            <label class="switch"><input type="checkbox" id="uart-term-rts" disabled><span>RTS</span></label>
+            <button id="btn-uart-term-reset" class="btn btn-sm" disabled>RESET PULSE</button>
+            <span class="hint">drive the control lines below</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Control lines <span class="hint">RTS / DTR of the bridge port drive two DIOs (open-drain: asserted = low)</span></h2>
+      <div class="form">
+        <div class="field-row">
+          <label class="field"><span>Mode</span>
+            <select id="uart-ctrl-mode">
+              <option value="off">off</option>
+              <option value="esp">esp: ESP32/ESP8266 auto-reset (esptool)</option>
+              <option value="direct">direct: reset = RTS, boot = DTR</option>
+            </select>
+          </label>
+          <label class="field"><span>Reset / EN pin (RTS)</span><select id="uart-ctrl-reset"><option value="">none</option><option value="2">DIO2</option><option value="3" selected>DIO3</option><option value="4">DIO4</option><option value="5">DIO5</option><option value="6">DIO6</option><option value="7">DIO7</option></select></label>
+          <label class="field"><span>Boot / GPIO0 pin (DTR)</span><select id="uart-ctrl-boot"><option value="">none</option><option value="2" selected>DIO2</option><option value="3">DIO3</option><option value="4">DIO4</option><option value="5">DIO5</option><option value="6">DIO6</option><option value="7">DIO7</option></select></label>
+        </div>
+        <div class="btn-row">
+          <button id="btn-uart-ctrl-apply" class="btn">APPLY</button>
+          <span class="hint">While on, the bridge stays active. In esp mode, opening the port does nothing;
+            RESET PULSE (terminal) = RTS on, DTR off for 100 ms.</span>
+        </div>
+        <div class="status-grid">
+          <div class="stat"><span>MODE</span><b id="uart-ctrl-st-mode">-</b></div>
+          <div class="stat"><span>DTR / RTS</span><b id="uart-ctrl-st-lines">-</b></div>
+          <div class="stat"><span>RESET PIN</span><b id="uart-ctrl-st-reset">-</b></div>
+          <div class="stat"><span>BOOT PIN</span><b id="uart-ctrl-st-boot">-</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card term-card">
+      <pre id="uart-term-out" class="term-out"></pre>
+      <div class="term-form">
+        <span class="term-prompt">&gt;</span>
+        <input type="text" id="uart-term-input" placeholder="type and press Enter (terminal port must be connected)" disabled>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ EMU -->
+  <section class="panel" data-panel="emu">
+    <div class="grid-2">
+      <div class="card">
+        <h2>I2C device <span class="hint">answers at an address; stretches SCL after each byte</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Address (7-bit hex)</span><input type="text" id="emu-i2c-addr" value="76"></label>
+            <label class="field"><span>SCL</span><select id="emu-i2c-scl"><option value="0">DIO0</option><option value="1">DIO1</option><option value="2">DIO2</option><option value="3">DIO3</option><option value="4">DIO4</option><option value="5">DIO5</option><option value="6" selected>DIO6</option><option value="7">DIO7</option></select></label>
+            <label class="field"><span>SDA</span><select id="emu-i2c-sda"><option value="0">DIO0</option><option value="1">DIO1</option><option value="2">DIO2</option><option value="3">DIO3</option><option value="4">DIO4</option><option value="5">DIO5</option><option value="6">DIO6</option><option value="7" selected>DIO7</option></select></label>
+            <label class="switch"><input type="checkbox" id="emu-i2c-pu"><span>board pull-ups</span></label>
+          </div>
+          <div class="btn-row"><button id="btn-emu-i2c" class="btn btn-primary">START I2C DEVICE</button></div>
+        </div>
+        <h2>SPI device <span class="hint">command byte: read when cmd &amp; read mask == read value</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field"><span>Mode</span><select id="emu-spi-mode"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+            <label class="field"><span>CS</span><select id="emu-spi-cs"><option value="0">DIO0</option><option value="1">DIO1</option><option value="2" selected>DIO2</option><option value="3">DIO3</option><option value="4">DIO4</option><option value="5">DIO5</option><option value="6">DIO6</option><option value="7">DIO7</option></select></label>
+            <label class="field"><span>SCK</span><select id="emu-spi-sck"><option value="0">DIO0</option><option value="1">DIO1</option><option value="2">DIO2</option><option value="3">DIO3</option><option value="4">DIO4</option><option value="5" selected>DIO5</option><option value="6">DIO6</option><option value="7">DIO7</option></select></label>
+            <label class="field"><span>MOSI (in)</span><select id="emu-spi-mosi"><option value="0">DIO0</option><option value="1">DIO1</option><option value="2">DIO2</option><option value="3">DIO3</option><option value="4" selected>DIO4</option><option value="5">DIO5</option><option value="6">DIO6</option><option value="7">DIO7</option></select></label>
+            <label class="field"><span>MISO (out)</span><select id="emu-spi-miso"><option value="0">DIO0</option><option value="1">DIO1</option><option value="2">DIO2</option><option value="3" selected>DIO3</option><option value="4">DIO4</option><option value="5">DIO5</option><option value="6">DIO6</option><option value="7">DIO7</option></select></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Address mask</span><input type="text" id="emu-spi-amask" value="7f"></label>
+            <label class="field"><span>Read mask</span><input type="text" id="emu-spi-rmask" value="80"></label>
+            <label class="field"><span>Read value</span><input type="text" id="emu-spi-rval" value="80"></label>
+            <label class="field"><span>Status byte</span><input type="text" id="emu-spi-status" value="00"></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-emu-spi" class="btn btn-primary">START SPI DEVICE</button>
+            <span class="hint">SCK &le; 8 MHz (modes 0/2), &le; 2 MHz (1/3); CS high &ge; 10 us between transactions</span>
+          </div>
+        </div>
+        <div class="btn-row"><button id="btn-emu-stop" class="btn btn-danger">STOP EMULATOR</button></div>
+        <div class="status-grid">
+          <div class="stat"><span>BUS</span><b id="emu-st-bus">-</b></div>
+          <div class="stat"><span>TRANSFERS</span><b id="emu-st-txns">-</b></div>
+          <div class="stat"><span>BYTES R / W</span><b id="emu-st-rw">-</b></div>
+          <div class="stat"><span>NAKS</span><b id="emu-st-naks">-</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Registers <span class="hint">256 bytes, auto-incrementing pointer; kept across stop</span></h2>
+        <div class="form">
+          <div class="field-row">
+            <label class="field" style="max-width:110px"><span>Start (hex)</span><input type="text" id="emu-set-reg" value="d0"></label>
+            <label class="field"><span>Bytes (hex)</span><input type="text" id="emu-set-data" value="60"></label>
+            <button id="btn-emu-set" class="btn" style="align-self:flex-end">SET</button>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Read-only registers (hex, e.g. d0 d1)</span><input type="text" id="emu-ro" value=""></label>
+            <button id="btn-emu-ro" class="btn" style="align-self:flex-end">APPLY</button>
+          </div>
+          <div class="btn-row">
+            <button id="btn-emu-read" class="btn btn-primary">READ ALL</button>
+            <label class="switch"><input type="checkbox" id="emu-auto"><span>refresh every second</span></label>
+            <span class="hint">changed since the last read in green; click a cell to load it in the form</span>
+          </div>
+          <div class="reg-grid" id="emu-regs"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Transfers <span class="hint">what the target read from / wrote to the emulated device</span></h2>
+      <div class="btn-row"><button id="btn-emu-log-clear" class="btn btn-sm">CLEAR</button></div>
+      <div class="sniff-log" id="emu-log"></div>
+    </div>
+  </section>
+
+  <!-- ================================================================ SEQ -->
+  <section class="panel" data-panel="seq">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Program <span class="hint">runs on the board with microsecond timing</span></h2>
+        <div class="form">
+          <textarea id="seq-text" rows="16" spellcheck="false"></textarea>
+          <div class="field-row">
+            <label class="field" style="max-width:160px"><span>Timeout (s)</span><input type="number" id="seq-timeout" value="10" min="1"></label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-seq-run" class="btn btn-primary">RUN</button>
+            <button id="btn-seq-abort" class="btn btn-danger">ABORT</button>
+            <span class="hint" id="seq-state">-</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Syntax <span class="hint">one step per line, # comments, trailing ? = keep going on failure</span></h2>
+<pre class="help-pre">delay_us 100            delay_ms 20
+power on|off            pullups on|off
+dio_dir 3 out|in        dio_write 3 0|1
+dio_read                wait_dio 4 0 [timeout_us]
+watch 18                (hex DIO mask; 0 = off)
+i2c_write 76 f4 27      i2c_read 76 2
+i2c_write_read 76 d0 read 1
+spi_txn 9f read 3       uart_send help\r\n
+awg_dc 1.2              adc_read 0
+mark 1
+loop 10
+  ...
+end_loop
+
+Addresses and bytes are hex; pins, counts and
+times are decimal. A failing step stops the run
+unless it ends with '?'.</pre>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Result <span class="hint">board time of each step, from the first one</span></h2>
+      <table class="seq-table">
+        <thead><tr><th>t (us)</th><th>step</th><th>status</th><th>value</th></tr></thead>
+        <tbody id="seq-result"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- =========================================================== TIMELINE -->
+  <section class="panel" data-panel="timeline">
+    <div class="card">
+      <h2>Timeline <span class="hint">everything on one clock: DIO edges, sniffers, emulator, control lines, sequences, the UART terminal</span></h2>
+      <div class="form">
+        <div class="field-row" id="tl-watch"></div>
+        <div class="btn-row wrap">
+          <button id="btn-tl-start" class="btn btn-primary">START</button>
+          <button id="btn-tl-stop" class="btn btn-danger" disabled>STOP</button>
+          <button id="btn-tl-clear" class="btn btn-sm">CLEAR</button>
+          <button id="btn-tl-save" class="btn btn-sm">SAVE .TXT</button>
+          <input type="text" id="tl-mark" placeholder="marker label" style="max-width:220px">
+          <button id="btn-tl-mark" class="btn btn-sm">MARK</button>
+          <span class="hint" id="tl-state">stopped</span>
+        </div>
+        <div class="btn-row wrap" id="tl-sources"></div>
+        <div class="field-row">
+          <label class="field"><span>Filter text</span><input type="text" id="tl-filter" placeholder="e.g. NAK"></label>
+        </div>
+        <div class="hint">Sniffers record once started on the SPI / I2C tabs; UART lines come from the UART tab's terminal.
+          Watched pins are for control lines: over 50 edges/ms mutes them for 100 ms.</div>
+      </div>
+      <pre id="tl-out" class="term-out tl-out"></pre>
+    </div>
+  </section>
+
+</main>
+
+<div class="foot" id="foot"></div>
+
+<script src="js/proto.js"></script>
+<script src="js/fmt.js"></script>
+<script src="js/device.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/scope.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

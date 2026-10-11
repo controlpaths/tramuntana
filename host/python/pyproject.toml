@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tramuntana"
+version = "2.2.0"
+description = "Host library, CLI and MCP server for the Tramuntana Lite hardware hacking tool (RP2350 + Zephyr)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Pablo Trujillo", email = "pablo@controlpaths.com" }]
+dependencies = ["pyserial>=3.4"]
+
+[project.optional-dependencies]
+plot = ["matplotlib", "numpy"]
+mcp = ["mcp>=1.2,<2", "matplotlib", "numpy"]
+
+[project.scripts]
+tramuntana = "tramuntana.cli:main"
+tramuntana-mcp = "tramuntana.mcp_server:main"
+
+[tool.setuptools]
+packages = ["tramuntana"]
+
+[tool.setuptools.package-data]
+tramuntana = ["skills/tramuntana-debug/*.md", "skills/tramuntana-debug/references/*.md"]

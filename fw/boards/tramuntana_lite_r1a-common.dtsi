@@ -1,0 +1,260 @@
+/*
+ * Tramuntana Lite r1a - on-board hardware.
+ *
+ * App-level devicetree overlay (no dedicated board port). Describes
+ * everything that hangs off the Pico module's GPIOs on this board, derived
+ * from the schematic netlist (kicad/tramuntana_lite_r1a.kicad_sch):
+ *
+ *   Header pin | Net              | Pico GPIO | Devicetree
+ *   -----------|------------------|-----------|---------------------------
+ *   J1.1       | /3V3_TARGET      | GPIO11    | regulator-fixed, alias targetpwr
+ *   J1.3       | /AIN0            | GPIO26    | &adc channel 0
+ *   J1.5       | /AIN1            | GPIO27    | &adc channel 1
+ *   J1.7       | /AOUT0           | GPIO8     | &pwm slice 4A (aout0_pwm_default)
+ *   J1.9-16    | DIO0..DIO7       | GPIO7..0  | zephyr,user dio-gpios
+ *   -          | /DIO_PU_ENABLE   | GPIO10    | zephyr,user dio-pu-enable-gpios
+ *   J2.3/4     | SPI1 SCK/MOSI    | GPIO14/15 | &spi1
+ *   J2.5/6/7   | TFT RST/DC/CS    | GPIO16/17/13 | mipi-dbi-spi + st7735r
+ *   D3         | LEDR/LEDG/LEDB   | GPIO20/21/22 | gpio-leds, alias led-r/g/b
+ *
+ * DIO2..DIO5 (GPIO5..2) and DIO6/DIO7 (GPIO1/0) double as the RP2350's
+ * native SPI0 and I2C0, since that's what the connector's 8 GPIOs are for:
+ *
+ *   DIO pin | Pico GPIO | SPI0 signal | I2C0 signal
+ *   --------|-----------|-------------|------------
+ *   DIO2    | GPIO5     | CSN         | -
+ *   DIO3    | GPIO4     | RX (MISO)   | -
+ *   DIO4    | GPIO3     | TX (MOSI)   | -
+ *   DIO5    | GPIO2     | SCK         | -
+ *   DIO6    | GPIO1     | -           | SCL
+ *   DIO7    | GPIO0     | -           | SDA
+ *
+ * &spi0/&i2c0 below are enabled alongside dio-gpios's plain-GPIO view of
+ * the same pins - nothing stops an app from using both nodes, but only one
+ * function actually drives a given pin at a time, so pick one per DIO pin
+ * in practice. DIO6/DIO7 (I2C0) also double as UART0 (GPIO0/1), Zephyr's
+ * default console on this board target - see the note further down.
+ * tramuntana_fw disables UART0 and runs its bridge on UART1 instead, at
+ * DIO1 (GPIO6, TX) / DIO0 (GPIO7, RX) through the UART_AUX pin function.
+ *
+ * Series resistors, the target-rail fuse/clamp diodes and the power-good
+ * LED (D7) are electrical protection/indication only - not modeled here.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/mipi_dbi/mipi_dbi.h>
+
+/ {
+  aliases {
+    targetpwr = &target_3v3_regulator;
+    led-r = &led_r;
+    led-g = &led_g;
+    led-b = &led_b;
+  };
+
+  chosen {
+    zephyr,display = &st7735r_lite;
+  };
+
+  /* Q1 (P-FET high-side switch) gates the target's 3.3V rail. R17 pulls
+   * the gate to 3V3 (off) at reset; GPIO11 low turns the rail on. */
+  target_3v3_regulator: regulator-target-3v3 {
+    compatible = "regulator-fixed";
+    regulator-name = "target-3v3-regulator";
+    enable-gpios = <&gpio0 11 GPIO_ACTIVE_LOW>;
+    regulator-boot-off;
+  };
+
+  /* D3 is a common-anode RGB LED tied to +3V3: each leg sinks current
+   * through the RP2350 GPIO, so all three lines are active-low.
+   *
+   * The schematic nets are named LEDR=GPIO20/LEDG=GPIO21/LEDB=GPIO22, but
+   * on real hardware GPIO20 lights the green leg and GPIO21 the red one
+   * (D3's symbol/footprint pinout doesn't match its net names) - swapped
+   * here so led-r/led-g actually match what lights up. */
+  leds {
+    compatible = "gpio-leds";
+    led_r: led-r {
+      gpios = <&gpio0 21 GPIO_ACTIVE_LOW>;
+    };
+    led_g: led-g {
+      gpios = <&gpio0 20 GPIO_ACTIVE_LOW>;
+    };
+    led_b: led-b {
+      gpios = <&gpio0 22 GPIO_ACTIVE_LOW>;
+    };
+  };
+
+  /* J1's 8 general-purpose header pins, exposed as plain GPIOs. DIO0..DIO7
+   * map to GPIO7..GPIO0 (reversed on the header). aout0-gpios is kept for
+   * reference only - GPIO8 is muxed to PWM by &pwm's pinctrl below, and
+   * configuring it as a GPIO would undo that. */
+  zephyr_user: zephyr,user {
+    dio-gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>, <&gpio0 6 GPIO_ACTIVE_HIGH>,
+                <&gpio0 5 GPIO_ACTIVE_HIGH>, <&gpio0 4 GPIO_ACTIVE_HIGH>,
+                <&gpio0 3 GPIO_ACTIVE_HIGH>, <&gpio0 2 GPIO_ACTIVE_HIGH>,
+                <&gpio0 1 GPIO_ACTIVE_HIGH>, <&gpio0 0 GPIO_ACTIVE_HIGH>;
+    aout0-gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
+    dio-pu-enable-gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>;
+    io-channels = <&adc 0>, <&adc 1>;
+  };
+
+  /* 1.8" 128x160 ST7735R panel on J2. BL is tied straight to +3V3 (no
+   * GPIO control). MISO isn't wired, so this bus is write-only. */
+  mipi_dbi_lite: mipi-dbi-lite {
+    compatible = "zephyr,mipi-dbi-spi";
+    spi-dev = <&spi1>;
+    dc-gpios = <&gpio0 17 GPIO_ACTIVE_HIGH>;
+    reset-gpios = <&gpio0 16 GPIO_ACTIVE_LOW>;
+    write-only;
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    st7735r_lite: st7735r@0 {
+      compatible = "sitronix,st7735r";
+      reg = <0>;
+      mipi-mode = "MIPI_DBI_MODE_SPI_4WIRE";
+      mipi-max-frequency = <20000000>;
+      width = <128>;
+      height = <160>;
+      /* Generic clone panel: no tab-color info. If the picture comes out
+       * shifted/mirrored, adjust x-offset/y-offset/madctl here. */
+      x-offset = <0>;
+      y-offset = <0>;
+      madctl = <0x00>;
+      colmod = <0x55>;
+      vmctr1 = <0x0e>;
+      pwctr1 = [a2 02 84];
+      pwctr2 = [c5];
+      pwctr3 = [0a 00];
+      pwctr4 = [8a 2a];
+      pwctr5 = [8a ee];
+      frmctr1 = [01 2c 2d];
+      frmctr2 = [01 2c 2d];
+      frmctr3 = [01 2c 2d 01 2c 2d];
+      gamctrp1 = [02 1c 07 12 37 32 29 2d 29 25 2b 39 00 01 03 10];
+      gamctrn1 = [03 1d 07 06 2e 2c 29 2d 2e 2e 37 3f 00 00 02 10];
+    };
+  };
+};
+
+&pinctrl {
+  spi1_default: spi1_default {
+    group1 {
+      pinmux = <SPI1_SCK_P14>, <SPI1_TX_P15>, <SPI1_CSN_P13>;
+    };
+  };
+
+  /* Named dio_* rather than the usual spi0_default/i2c0_default: those
+   * labels already exist in the stock rpi_pico2 pinctrl file on different
+   * pins (GPIO16-19 and GPIO4/5) - reusing them would silently override
+   * that node instead of adding a new one. */
+  dio_spi0_default: dio_spi0_default {
+    group1 {
+      pinmux = <SPI0_SCK_P2>, <SPI0_TX_P3>, <SPI0_CSN_P5>;
+    };
+    group2 {
+      pinmux = <SPI0_RX_P4>;
+      input-enable;
+    };
+  };
+
+  dio_i2c0_default: dio_i2c0_default {
+    group1 {
+      pinmux = <I2C0_SDA_P0>, <I2C0_SCL_P1>;
+      input-enable;
+      input-schmitt-enable;
+    };
+  };
+
+  /* AOUT0 = GPIO8 = PWM slice 4 channel A, behind R3/C3 (2k7/1nF). */
+  aout0_pwm_default: aout0_pwm_default {
+    group1 {
+      pinmux = <PWM_4A_P8>;
+    };
+  };
+};
+
+/* The 'aout' waveform generator (src/aout.c) drives slice 4 straight from
+ * hardware/pwm.h; enabling the node here is what brings the PWM block out
+ * of reset and muxes GPIO8 to it at boot. */
+&pwm {
+  pinctrl-0 = <&aout0_pwm_default>;
+  pinctrl-names = "default";
+  status = "okay";
+};
+
+&spi1 {
+  pinctrl-0 = <&spi1_default>;
+  pinctrl-names = "default";
+  status = "okay";
+};
+
+/* DIO2..DIO5 as a hardware SPI0 bus (master mode, hardware CSN on DIO2). */
+&spi0 {
+  pinctrl-0 = <&dio_spi0_default>;
+  pinctrl-names = "default";
+  status = "okay";
+};
+
+/* DIO6/DIO7 as a hardware I2C0 bus. 100kHz Standard-mode by default since
+ * whatever's plugged into J1 is unknown - raise it in an app overlay
+ * (&i2c0 { clock-frequency = <I2C_BITRATE_FAST>; };) if it can go faster. */
+&i2c0 {
+  clock-frequency = <I2C_BITRATE_STANDARD>;
+  pinctrl-0 = <&dio_i2c0_default>;
+  pinctrl-names = "default";
+  status = "okay";
+};
+
+/* No pins of its own (internal bus-to-memory engine) - disabled by default
+ * upstream, enabled here so CONFIG_DMA_RPI_PICO can build (see 'scope1' in
+ * src/main.c, which drives one channel straight from hardware/dma.h). */
+&dma {
+  status = "okay";
+};
+
+/* GPIO26/GPIO27 (ADC0/ADC1) are already muxed by the stock board's
+ * adc_default pinctrl group - only the channels themselves are added here.
+ * That group also turns the pads' digital input on, which on the RP2350
+ * (erratum E9) leaks enough current to hold a floating AIN pin at ~2.2 V:
+ * with AIN1 wired to the switched-off 3V3_TARGET rail it back-powers the
+ * rail and lights D7. An analog pin needs no digital input, so drop it. */
+&adc_default {
+  group1 {
+    /delete-property/ input-enable;
+  };
+};
+
+&adc {
+  #address-cells = <1>;
+  #size-cells = <0>;
+
+  channel@0 {
+    reg = <0>;
+    zephyr,gain = "ADC_GAIN_1";
+    zephyr,reference = "ADC_REF_INTERNAL";
+    zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+    zephyr,resolution = <12>;
+  };
+
+  channel@1 {
+    reg = <1>;
+    zephyr,gain = "ADC_GAIN_1";
+    zephyr,reference = "ADC_REF_INTERNAL";
+    zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+    zephyr,resolution = <12>;
+  };
+};
+
+/* Also pin-less from devicetree's point of view: 'spidrv sniff' (src/spi.c)
+ * muxes DIO2/DIO3/DIO5 onto it at runtime with gpio_set_function() and
+ * loads its own capture program straight through hardware/pio.h. Enabling
+ * the node is what turns on CONFIG_PIO_RPI_PICO (clock + reset release at
+ * boot) and, via CONFIG_PICOSDK_USE_PIO, pulls the SDK's pio.c into the
+ * build. */
+&pio0 {
+  status = "okay";
+};

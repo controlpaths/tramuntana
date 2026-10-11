@@ -1,0 +1,99 @@
+/*
+ * Tramuntana Lite r1a on a Pico 2 - see fw/boards/tramuntana_lite_r1a-
+ * common.dtsi for the hardware itself. This overlay adds what this app
+ * needs on top:
+ *
+ *   - three CDC-ACM ports on the Pico's USB: cdc_acm_0 (shell/console),
+ *     cdc_acm_1 (binary API, src/proto.c), cdc_acm_2 (UART bridge to
+ *     &uart1 on DIO1/DIO0, src/bridge.c);
+ *   - &uart1 enabled on GPIO6/GPIO7 (its pins are handed over to it only
+ *     while the bridge is open, see src/board.c), &uart0 disabled;
+ *   - a 192KB "capture arena" carved out of the top of SRAM at a fixed,
+ *     128KB-aligned address, so the DMA ring buffers (scope, logic
+ *     analyzer, sniffers) can use the DMA's address-wrapping mode without
+ *     the linker having to pad .bss to reach an aligned address.
+ */
+
+#include "../../../boards/tramuntana_lite_r1a-common.dtsi"
+#include <zephyr/dt-bindings/memory-attr/memory-attr-arm.h>
+
+/ {
+  chosen {
+    zephyr,console = &cdc_acm_0;
+    zephyr,shell-uart = &cdc_acm_0;
+  };
+
+  capture_arena: memory@20050000 {
+    compatible = "zephyr,memory-region", "mmio-sram";
+    reg = <0x20050000 DT_SIZE_K(192)>;
+    zephyr,memory-region = "CAPTURE_ARENA";
+    zephyr,memory-attr = <( DT_MEM_ARM(ATTR_MPU_RAM) )>;
+  };
+};
+
+/* 520KB total; the arena above takes the top 192KB, the 8KB of scratch
+ * banks past 0x20080000 are left alone. */
+&sram0 {
+  reg = <0x20000000 DT_SIZE_K(320)>;
+};
+
+&zephyr_udc0 {
+  cdc_acm_0: cdc_acm_0 {
+    compatible = "zephyr,cdc-acm-uart";
+    label = "Tramuntana shell";
+  };
+  cdc_acm_1: cdc_acm_1 {
+    compatible = "zephyr,cdc-acm-uart";
+    label = "Tramuntana API";
+    tx-fifo-size = <4096>;
+    rx-fifo-size = <2048>;
+  };
+  cdc_acm_2: cdc_acm_2 {
+    compatible = "zephyr,cdc-acm-uart";
+    label = "Tramuntana UART bridge";
+    tx-fifo-size = <2048>;
+    rx-fifo-size = <2048>;
+  };
+};
+
+/* UART1 = GPIO6 (TX, DIO1) / GPIO7 (RX, DIO0). On the RP2350 these are
+ * UART1's CTS/RTS pins, which carry TX/RX through the UART_AUX function
+ * (F11), so the bridge gets pins of its own instead of sharing DIO6/DIO7
+ * with I2C. src/board.c re-muxes them as the bridge opens and closes. */
+&pinctrl {
+  uart1_tramuntana: uart1_tramuntana {
+    group1 {
+      pinmux = <UART1_TX_P6>;
+    };
+
+    group2 {
+      pinmux = <UART1_RX_P7>;
+      input-enable;
+    };
+  };
+};
+
+&uart1 {
+  status = "okay";
+  current-speed = <115200>;
+  pinctrl-0 = <&uart1_tramuntana>;
+  pinctrl-names = "default";
+};
+
+/* The stock console UART (GPIO0/GPIO1 = DIO7/DIO6) is not used: the
+ * console is cdc_acm_0 and those pins belong to I2C. */
+&uart0 {
+  status = "disabled";
+};
+
+/* PIO1 hosts the emulated I2C/SPI targets (src/emu.c); PIO0 is the
+ * sniffers' and the logic analyzer's. */
+&pio1 {
+  status = "okay";
+};
+
+/* The hardware I2C0 block is not used (the I2C master is bit-banged so
+ * arbitrary START/STOP sequences can be scripted, see src/i2c.c). */
+&i2c0 {
+  status = "disabled";
+};

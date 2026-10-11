@@ -1,0 +1,36 @@
+# Zephyr build output (the UF2 is published as a release asset)
+fw/build/
+# Local paths for fw/build.sh (see fw/.env.example)
+fw/.env
+# Python
+host/python/.venv/
+__pycache__/
+*.egg-info/
+# Wheels built from host/python (published as release assets)
+host/python/dist/
+host/python/build/
+# 3D case venv (CadQuery)
+hw/tramuntana_lite_r1a/case/.venv/
+# Simulation / bitstreams / editor leftovers
+*.vcd
+*.uf2
+*.swp
+.vscode/
+# Social media drafts
+copy.md
+
+# KiCad: automatic backups, lock files, per-user settings, zipped outputs
+*-backups/
+*.lck
+*.kicad_prl
+fp-info-cache
+hw/**/*.zip
+# Manufacturer-specific BOMs
+*pcbway*.csv
+
+# Third-party files not redistributed (datasheets, vendor libraries and models)
+hw/tramuntana_r1a/lib/ST-TF-003A/
+hw/tramuntana_lite_r1a/lib/
+
+# Unused display artwork
+fw/imgs/unused/

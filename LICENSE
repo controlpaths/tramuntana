@@ -1,0 +1,24 @@
+Tramuntana
+Copyright (c) 2026 Pablo Trujillo
+
+This repository contains software, hardware designs and documentation,
+each under its own license. The full texts are in LICENSES/.
+
+  Firmware (fw/) and host software (host/: library, CLI, MCP server,
+  AI agent skill, webapp)
+    MIT License                              LICENSES/MIT.txt
+    SPDX-License-Identifier: MIT
+
+  Hardware (hw/): schematics, PCB layouts, fabrication outputs and the
+  3D-printed case
+    CERN Open Hardware Licence v2 - Permissive
+                                             LICENSES/CERN-OHL-P-2.0.txt
+    SPDX-License-Identifier: CERN-OHL-P-2.0
+
+  Documentation (docs/, README files, images)
+    Creative Commons Attribution 4.0 International
+                                             LICENSES/CC-BY-4.0.txt
+    SPDX-License-Identifier: CC-BY-4.0
+
+Third-party files (Zephyr, KiCad standard libraries, component datasheets
+and vendor models) remain under their own licenses and are not included.
