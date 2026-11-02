@@ -57,6 +57,10 @@ The J1 pinout comes with the MCP server instructions. This skill is about
 6. **Leave the bench safe.** When done: `awg_off`, stop sniffers, release
    GPIOs as inputs, `uart_close`, and switch the rail off unless the user
    wants the target left running. `display_text` can show what you're doing.
+   Instruments that drive pins keep driving them after use: `spi_release`
+   after SPI work, `pwm_stop`, `emu_stop`, and check `board_status` before
+   the target drives any of those DIOs - two outputs on one wire spoil every
+   result that follows.
 
 ## Workflow
 
@@ -127,7 +131,11 @@ the expected waveforms and the usual root causes.
   use `stats` (vpp, rms, mean) and `freq_hz`.
 - `logic_capture` gives per-channel edges, duty and frequency, and `decoded`
   when asked. `count: 0` decoded with edges present means wrong pins, wrong
-  baud/mode, or too low a sample rate, not "no traffic".
+  baud/mode, or too low a sample rate, not "no traffic". Decoded SPI/I2C
+  report the clock (`sck_hz`/`scl_hz`, median period) and `bit_rate_hz`
+  (pauses between bytes and clock stretching included): don't read the
+  second as the bus clock. `names` is a map by DIO, `{"2": "CS"}`.
+  A frame marked `"cut": true` ran into the end of the capture.
 - I2C text: `S 68W+ 75+  S 68R+ 71- P` is START, address 0x68 write ACKed,
   byte 0x75 ACKed, repeated START, read ACKed, byte 0x71 NAKed by the master
   (normal on the last read byte), STOP. `with_nak` counts transfers with an

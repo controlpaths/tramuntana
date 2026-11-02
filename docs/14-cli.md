@@ -47,6 +47,7 @@ command (NAK, busy, bad argument) or a bad value, 3 link error.
 |---|---|
 | `tramuntana spi conf <freq> [mode] [--lsb]` | clock (≤ 75 MHz), mode 0–3, LSB first; prints the actual clock |
 | `tramuntana spi sel` / `unsel` | CS low / high |
+| `tramuntana spi release` | stop driving DIO2..5 (they stay driven after any SPI command) |
 | `tramuntana spi write <bytes…>` | send, CS untouched |
 | `tramuntana spi read <n>` | read n bytes (sends 0x00), CS untouched |
 | `tramuntana spi xfer <bytes…>` | full duplex, CS untouched; prints what came back |

@@ -9,13 +9,13 @@
  *
  *   'bytes' (sm_a) - shifts 9-bit frames, never looks for START/STOP:
  *
- *      0  set y, 7
+ *      0  set y, 7 [12]
  *      1  out pindirs, 1     ; bit to drive (0 = release): data when the
  *                            ;   board transmits, 0 when it receives
  *      2  wait 1 gpio SCL
  *      3  in pins, 1         ; SDA as seen on the bus
- *      4  wait 0 gpio SCL
- *      5  jmp y-- 1
+ *      4  wait 0 gpio SCL [31]
+ *      5  jmp y-- 1 [12]
  *      6  set pindirs, 1     ; 8 bits done: hold SCL low (stretch)
  *      7  push block         ;   hand the byte to the CPU
  *      8  pull block         ;   and wait for its answer: bit 0 = ACK,
@@ -23,8 +23,14 @@
  *     10  set pindirs, 0     ; release SCL: 9th clock
  *     11  wait 1 gpio SCL
  *     12  jmp pin 14         ; SDA high on the 9th clock = NAK: done
- *     13  wait 0 gpio SCL    ; (wrap to 0)
+ *     13  wait 0 gpio SCL [31] ; (wrap to 0)
  *     14  jmp 14             ; parked until the CPU restarts it
+ *
+ *   The delays hold SDA ~300 ns after SCL falls before it changes (the
+ *   internal hold UM10204 asks of a device). Without them SDA moved
+ *   ~30 ns after the edge, and a sampler that saw SCL a little later than
+ *   this board did - the I2C sniffer, a logic analyzer - could take a data
+ *   bit for a START or a STOP.
  *
  *   SCL is only ever released at 10, right after this machine's own
  *   stretch: the pin direction is shared by both machines (last write
@@ -75,7 +81,17 @@
  *   READ_ADDR_TRIG, so channel B starts copying the row into the TX
  *   FIFO with no CPU involved, and 'tx' carries on shifting from it.
  *   spi_table[cmd] holds what a read command answers (regs from the
- *   register it addresses) and is kept in step with the register file.
+ *   register it addresses) and is kept in step with the register file:
+ *   every byte the target writes is copied into the rows that show it
+ *   as it arrives (spi_table_put()), so on CS rise the CPU only has to
+ *   rearm the shifters - a few microseconds - before the next command
+ *   can come. Rebuilding the rows there instead, as 1.1 did, kept the
+ *   emulator deaf for up to ~160 us after a write.
+ *
+ * Events: every transfer goes through a queue to a thread that sends
+ * EVT_EMU. When the queue is full the event is dropped, counted
+ * (emu_stats.dropped), and the next one that gets through carries
+ * LOG_GAP, so the host knows its log has a hole.
  */
 
 #include <zephyr/kernel.h>
@@ -87,6 +103,7 @@
 #include <hardware/gpio.h>
 #include <hardware/pio.h>
 #include <string.h>
+#include <cmsis_core.h>
 
 #undef pio0
 #undef pio1
@@ -135,8 +152,12 @@ struct emu_log {
 #define LOG_NAK       BIT(1)
 #define LOG_TRUNCATED BIT(2)
 #define LOG_NO_START  BIT(3)   /* NAKed byte that came without a START */
+#define LOG_SUSPECT   BIT(4)   /* SPI: CS was already low when the shifters were rearmed */
+#define LOG_GAP       BIT(5)   /* events were dropped before this one */
 
-K_MSGQ_DEFINE(emu_q, sizeof(struct emu_log), 16, 4);
+#define UI_ACTIVITY_EVERY_MS 50
+
+K_MSGQ_DEFINE(emu_q, sizeof(struct emu_log), 64, 4);
 K_THREAD_STACK_DEFINE(emu_stack, 1024);
 static struct k_thread emu_thread_data;
 
@@ -162,14 +183,19 @@ static struct {
   /* spi */
   struct emu_spi_params sp;
   int dma_a, dma_b;
+  uint8_t alias[4];      /* command bits outside addr_mask, every combination */
+  uint8_t n_alias;       /* 0: too many, rows rebuilt at CS rise instead */
   bool have_cmd;
   bool spi_read;
+  bool suspect;          /* this CS window started before the rearm */
+  uint8_t cmd;
   /* current transfer */
   uint8_t ptr;
   uint8_t reg;
   uint16_t n;
   uint8_t data[EMU_LOG_MAX];
   uint32_t t_start;
+  bool gap;              /* an event was dropped since the last one queued */
   struct emu_stats st;
 } emu;
 
@@ -213,6 +239,46 @@ static void spi_table_update(uint8_t r0, uint32_t n)
   }
 }
 
+/* Commands whose rows show a register: base = cmd & addr_mask, plus every
+ * combination of the bits outside addr_mask (one for the usual 0x7F). More
+ * than four combinations (addr_mask with 3+ bits clear) and the per-byte
+ * update gets too slow for the ISR: n_alias = 0, see spi_finish(). */
+static void spi_alias_init(void)
+{
+  uint8_t free = (uint8_t)~emu.sp.addr_mask;
+  uint8_t x = 0;
+
+  emu.n_alias = 0;
+  if (__builtin_popcount(free) > 2) {
+    return;
+  }
+  do {
+    emu.alias[emu.n_alias++] = x;
+    x = (uint8_t)((x - free) & free);   /* next subset of 'free' */
+  } while (x != 0);
+}
+
+/* Register r now holds v: copy it into every read row that shows it. */
+__ramfunc static void spi_table_put(uint8_t r, uint8_t v)
+{
+  int k, j;
+
+  for (k = 0; k < EMU_SPI_BURST; k++) {
+    uint8_t base = (uint8_t)(r - k);
+
+    if (base & ~emu.sp.addr_mask) {
+      continue;
+    }
+    for (j = 0; j < emu.n_alias; j++) {
+      uint8_t c = base | emu.alias[j];
+
+      if (spi_cmd_is_read(c)) {
+        spi_table[c * EMU_SPI_BURST + k] = v;
+      }
+    }
+  }
+}
+
 void emu_regs_set(uint8_t offset, const uint8_t *data, size_t n)
 {
   unsigned int key;
@@ -244,6 +310,22 @@ void emu_ro_set(const uint8_t mask[32])
 
 /* --- transfer log (ISR -> thread -> EVT_EMU) ------------------------------------- */
 
+static void log_put(struct emu_log *l)
+{
+  if (emu.gap) {
+    l->flags |= LOG_GAP;
+  }
+  if (k_msgq_put(&emu_q, l, K_NO_WAIT) == 0) {
+    emu.gap = false;
+  } else {
+    emu.st.dropped++;
+    emu.gap = true;
+  }
+}
+
+/* What the target got on a read: I2C, the bytes read back from SDA as
+ * they went out (emu.data); SPI, the response row the DMA fed to MISO -
+ * not regs[], which may have changed since. */
 static void log_transfer(bool read, bool nak)
 {
   struct emu_log l;
@@ -251,14 +333,19 @@ static void log_transfer(bool read, bool nak)
 
   l.t_us = emu.t_start;
   l.kind = (uint8_t)emu.kind;
-  l.flags = (read ? LOG_READ : 0) | (nak ? LOG_NAK : 0) | (emu.n > EMU_LOG_MAX ? LOG_TRUNCATED : 0);
+  l.flags = (read ? LOG_READ : 0) | (nak ? LOG_NAK : 0) | (emu.n > EMU_LOG_MAX ? LOG_TRUNCATED : 0) |
+            (emu.suspect ? LOG_SUSPECT : 0);
   l.addr = emu.kind == EMU_I2C ? emu.addr : 0;
   l.reg = emu.reg;
   l.n = (uint8_t)keep;
   for (i = 0; i < keep; i++) {
-    l.data[i] = read ? regs[(uint8_t)(emu.reg + i)] : emu.data[i];
+    if (read && emu.kind == EMU_SPI) {
+      l.data[i] = spi_table[emu.cmd * EMU_SPI_BURST + i];
+    } else {
+      l.data[i] = emu.data[i];
+    }
   }
-  (void)k_msgq_put(&emu_q, &l, K_NO_WAIT);
+  log_put(&l);
 }
 
 /* An I2C address byte the emulator didn't answer: another device's, or one
@@ -271,11 +358,13 @@ static void log_nak(uint8_t b, bool no_start)
     .addr = b >> 1, .reg = b, .n = 0,
   };
 
-  (void)k_msgq_put(&emu_q, &l, K_NO_WAIT);
+  log_put(&l);
 }
 
 static void emu_thread(void *a, void *b, void *c)
 {
+  int64_t ui_next = 0;
+
   ARG_UNUSED(a);
   ARG_UNUSED(b);
   ARG_UNUSED(c);
@@ -295,7 +384,12 @@ static void emu_thread(void *a, void *b, void *c)
     evt[7] = l.reg;
     memcpy(evt + 8, l.data, l.n);
     proto_send_event(EVT_EMU, evt, 8 + l.n);
-    ui_activity("EMU %c %02X %uB", (l.flags & LOG_READ) ? 'R' : 'W', l.reg, l.n);
+    /* The display can't keep up with thousands of transfers a second,
+     * and redrawing it for each one would slow the event stream down. */
+    if (k_uptime_get() >= ui_next) {
+      ui_activity("EMU %c %02X %uB", (l.flags & LOG_READ) ? 'R' : 'W', l.reg, l.n);
+      ui_next = k_uptime_get() + UI_ACTIVITY_EVERY_MS;
+    }
   }
 }
 
@@ -356,6 +450,9 @@ static uint32_t i2c_on_byte(uint8_t b)
   case ST_READ:
     /* 'b' is the byte just sent, read back from the bus; queue the next
      * one (the master may NAK and never clock it: see i2c_finish()). */
+    if (emu.n < EMU_LOG_MAX) {
+      emu.data[emu.n] = b;
+    }
     emu.n++;
     emu.st.reads++;
     return i2c_answer(false, regs[emu.ptr++]);
@@ -398,6 +495,7 @@ static void i2c_restart_bytes(void)
 static void i2c_service(void)
 {
   PIO pio = emu.pio;
+  uint32_t flags;
 
   while (!pio_sm_is_rx_fifo_empty(pio, emu.sm_a)) {
     uint8_t b = (uint8_t)pio_sm_get(pio, emu.sm_a);
@@ -405,16 +503,22 @@ static void i2c_service(void)
     emu.st.bytes++;
     pio_sm_put(pio, emu.sm_a, i2c_on_byte(b));
   }
-  /* A STOP can only be pending ahead of a START (the START handshake
-   * holds SCL until it's served), so handle it first. */
-  if (pio_interrupt_get(pio, FLAG_STOP)) {
+  /* A STOP can only be pending ahead of a START: 'conditions' is parked
+   * at 'irq wait' after a START until it's served, so it can't see the
+   * next STOP before that. Both flags are read in one go, though: read
+   * one at a time, a STOP and the next START could both land between
+   * the two reads (an ISR delayed by a higher-priority one, at 1 MHz),
+   * the START would be served first, and the stale STOP after it would
+   * reset the state to IDLE and NAK the address that follows. */
+  flags = pio->irq;
+  if (flags & BIT(FLAG_STOP)) {
     emu.st.stops++;
     i2c_finish();
     emu.state = ST_IDLE;
     i2c_restart_bytes();
     pio_interrupt_clear(pio, FLAG_STOP);
   }
-  if (pio_interrupt_get(pio, FLAG_START)) {
+  if (flags & BIT(FLAG_START)) {
     emu.st.starts++;
     i2c_finish();
     emu.state = ST_ADDR;
@@ -423,17 +527,22 @@ static void i2c_service(void)
   }
 }
 
+/* SDA hold after SCL falls, split over two instructions (5-bit delay
+ * fields): 2 (input sync) + 1 + 31 + 1 + 12 cycles = 47 = ~313 ns. */
+#define SDA_HOLD_A 31
+#define SDA_HOLD_B 12
+
 static void i2c_programs(uint scl, uint sda)
 {
   uint16_t *a = emu.prog_a.instr;
   uint16_t *b = emu.prog_b.instr;
 
-  a[0] = pio_encode_set(pio_y, 7);
+  a[0] = pio_encode_set(pio_y, 7) | pio_encode_delay(SDA_HOLD_B);
   a[1] = pio_encode_out(pio_pindirs, 1);
   a[2] = pio_encode_wait_gpio(true, scl);
   a[3] = pio_encode_in(pio_pins, 1);
-  a[4] = pio_encode_wait_gpio(false, scl);
-  a[5] = pio_encode_jmp_y_dec(1);
+  a[4] = pio_encode_wait_gpio(false, scl) | pio_encode_delay(SDA_HOLD_A);
+  a[5] = pio_encode_jmp_y_dec(1) | pio_encode_delay(SDA_HOLD_B);
   a[6] = pio_encode_set(pio_pindirs, 1);
   a[7] = pio_encode_push(false, true);
   a[8] = pio_encode_pull(false, true);
@@ -441,7 +550,7 @@ static void i2c_programs(uint scl, uint sda)
   a[10] = pio_encode_set(pio_pindirs, 0);
   a[11] = pio_encode_wait_gpio(true, scl);
   a[12] = pio_encode_jmp_pin(14);
-  a[13] = pio_encode_wait_gpio(false, scl);
+  a[13] = pio_encode_wait_gpio(false, scl) | pio_encode_delay(SDA_HOLD_A);
   a[14] = pio_encode_jmp(14);
   emu.prog_a.p = (struct pio_program){ .instructions = a, .length = 15, .origin = -1,
                                        .pio_version = 0, .used_gpio_ranges = BIT(0) };
@@ -468,11 +577,12 @@ static void i2c_programs(uint scl, uint sda)
 
 /* --- SPI ---------------------------------------------------------------------- */
 
-static void spi_on_byte(uint8_t b)
+__ramfunc static void spi_on_byte(uint8_t b)
 {
   if (!emu.have_cmd) {
     emu.have_cmd = true;
     emu.t_start = board_time_us();
+    emu.cmd = b;
     emu.spi_read = spi_cmd_is_read(b);
     emu.reg = b & emu.sp.addr_mask;
     emu.n = 0;
@@ -486,6 +596,9 @@ static void spi_on_byte(uint8_t b)
 
     if (!reg_ro(r)) {
       regs[r] = b;
+      if (emu.n_alias != 0) {
+        spi_table_put(r, b);
+      }
     }
     if (emu.n < EMU_LOG_MAX) {
       emu.data[emu.n] = b;
@@ -495,12 +608,16 @@ static void spi_on_byte(uint8_t b)
   emu.n++;
 }
 
+/* After the rearm: report the transfer. The table is already up to date
+ * (spi_table_put()) unless addr_mask leaves too many command aliases, and
+ * then the rows are rebuilt here - late, but the shifters are already
+ * listening for the next command. */
 static void spi_finish(void)
 {
   if (!emu.have_cmd) {
     return;
   }
-  if (!emu.spi_read && emu.n > 0) {
+  if (!emu.spi_read && emu.n > 0 && emu.n_alias == 0) {
     spi_table_update(emu.reg, emu.n);
   }
   if (emu.n > 0 || !emu.spi_read) {
@@ -511,7 +628,7 @@ static void spi_finish(void)
 
 /* Back to "waiting for CS": both shifters restarted, the lookup DMA
  * rearmed, the status byte queued for the next command byte. */
-static void spi_rearm(void)
+__ramfunc static void spi_rearm(void)
 {
   PIO pio = emu.pio;
   uint32_t mask = BIT(emu.sm_a) | BIT(emu.sm_b);
@@ -532,19 +649,32 @@ static void spi_rearm(void)
   pio_set_sm_mask_enabled(pio, mask, true);
 }
 
-static void spi_service(void)
+__ramfunc static void spi_service(void)
 {
   PIO pio = emu.pio;
+  uint32_t t0 = DWT->CYCCNT;
 
   while (!pio_sm_is_rx_fifo_empty(pio, emu.sm_a)) {
     emu.st.bytes++;
     spi_on_byte((uint8_t)pio_sm_get(pio, emu.sm_a));
   }
   if (pio_interrupt_get(pio, FLAG_CS_UP)) {
+    bool late;
+
     emu.st.starts++;
     pio_interrupt_clear(pio, FLAG_CS_UP);
-    spi_finish();
+    /* Rearm first: the next command can come as soon as CS has been
+     * high for a few microseconds. */
     spi_rearm();
+    late = !gpio_get(DIO_GPIO(emu.sp.cs));
+    emu.st.rearm_max_cyc = MAX(emu.st.rearm_max_cyc, DWT->CYCCNT - t0);
+    spi_finish();
+    /* CS already low again: the shifters missed the start of this
+     * window, so it is decoded (and answered) out of step. */
+    emu.suspect = late;
+    if (late) {
+      emu.st.late++;
+    }
   }
 }
 
@@ -730,6 +860,8 @@ static int claim_common(uint8_t pins, enum emu_kind kind)
   emu.st.kind = kind;
   emu.ptr = 0;
   emu.n = 0;
+  emu.gap = false;
+  emu.suspect = false;
   return 0;
 }
 
@@ -844,6 +976,8 @@ int emu_spi_start(const struct emu_spi_params *p)
   }
   emu.sp = *p;
   emu.have_cmd = false;
+  emu.suspect = false;
+  spi_alias_init();
   miso = DIO_GPIO(p->miso);
   spi_programs();
   spi_table_update(0, EMU_REGS);

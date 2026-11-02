@@ -182,13 +182,17 @@ class I2cTransfer:
             ``I2C S 68W+ 75+  S 68R+ 71- P``).
         stopped: a STOP ended it (False when the capture ended first).
         partial_bits: bits of an incomplete byte left when it ended.
-        scl_hz: SCL frequency measured inside the message.
+        scl_hz: SCL frequency: the median period between consecutive rising
+            edges, so clock stretching and pauses between bytes don't lower it.
+        bit_rate_hz: SCL rising edges per second over the whole message,
+            stretching included (the throughput the bus really got).
     """
     t_s: float
     message: I2cMessage
     stopped: bool = True
     partial_bits: int = 0
     scl_hz: Optional[float] = None
+    bit_rate_hz: Optional[float] = None
 
     def __str__(self):
         s = f"{self.t_s * 1e6:.1f}us {str(self.message)[4:]}"
@@ -225,7 +229,9 @@ def i2c(cap: LogicCapture, scl: int = 6, sda: int = 7) -> List[I2cTransfer]:
         # a STOP is always set up by one SCL rise that carries no data bit
         cur.partial_bits = max(0, nbits - 1) if stopped else nbits
         if len(rises) >= 2:
-            cur.scl_hz = round(cap.rate_hz * (len(rises) - 1) / (rises[-1] - rises[0]), 1)
+            periods = sorted(b - a for a, b in zip(rises, rises[1:]))
+            cur.scl_hz = round(cap.rate_hz / periods[len(periods) // 2], 1)
+            cur.bit_rate_hz = round(cap.rate_hz * (len(rises) - 1) / (rises[-1] - rises[0]), 1)
         out.append(cur)
         cur = None
 
@@ -274,7 +280,10 @@ class SpiTransfer:
         t_s: time CS went low (or of the first SCK edge without CS).
         mosi, miso: the words shifted each way.
         partial_bits: bits of an incomplete word left when CS rose.
-        sck_hz: SCK frequency measured inside the transaction.
+        sck_hz: SCK frequency: the median period between consecutive
+            sampling edges, so pauses between bytes don't lower it.
+        bit_rate_hz: bits per second over the whole transaction, pauses
+            included (lower than ``sck_hz`` when the master leaves gaps).
         complete: CS rose inside the capture (False if it was cut).
     """
     t_s: float
@@ -283,6 +292,7 @@ class SpiTransfer:
     partial_bits: int = 0
     sck_hz: Optional[float] = None
     complete: bool = True
+    bit_rate_hz: Optional[float] = None
 
     def __str__(self):
         w = lambda xs: " ".join(f"{x:02X}" for x in xs)
@@ -325,7 +335,9 @@ def spi(cap: LogicCapture, cs: Optional[int] = 2, sck: int = 5, mosi: Optional[i
         cur.partial_bits = nbits
         cur.complete = complete
         if len(edges) >= 2:
-            cur.sck_hz = round(cap.rate_hz * (len(edges) - 1) / (edges[-1] - edges[0]), 1)
+            periods = sorted(b - a for a, b in zip(edges, edges[1:]))
+            cur.sck_hz = round(cap.rate_hz / periods[len(periods) // 2], 1)
+            cur.bit_rate_hz = round(cap.rate_hz * (len(edges) - 1) / (edges[-1] - edges[0]), 1)
         out.append(cur)
         cur = None
 

@@ -493,8 +493,13 @@ class Emu {
 
   async status() {
     const r = await this.link.request(PROTO.CMD.EMU_STATUS);
-    return { bus: ['off', 'i2c', 'spi'][r[0]], transfers: P.rd32(r, 1), bytesRead: P.rd32(r, 5),
-             bytesWritten: P.rd32(r, 9), naks: P.rd32(r, 13) };
+    const st = { bus: ['off', 'i2c', 'spi'][r[0]], transfers: P.rd32(r, 1), bytesRead: P.rd32(r, 5),
+                 bytesWritten: P.rd32(r, 9), naks: P.rd32(r, 13) };
+    if (r.length >= 37) {   /* fw 1.3: events dropped, SPI windows that began before the rearm */
+      st.dropped = P.rd32(r, 29);
+      st.late = P.rd32(r, 33);
+    }
+    return st;
   }
 }
 
@@ -504,7 +509,7 @@ const SEQ_OPS = {
   delay_us: 0x01, power: 0x02, pullups: 0x03, dio_dir: 0x04, dio_write: 0x05, dio_read: 0x06,
   wait_dio: 0x07, i2c_write: 0x08, i2c_read: 0x09, i2c_write_read: 0x0A, spi_txn: 0x0B,
   uart_send: 0x0C, awg_dc: 0x0D, adc_read: 0x0E, mark: 0x0F, loop: 0x10, end_loop: 0x11,
-  logic_arm: 0x12, scope_arm: 0x13, watch: 0x14,
+  logic_arm: 0x12, scope_arm: 0x13, watch: 0x14, delay_ms: 0x15, pwm: 0x16, pwm_sync: 0x17,
 };
 const SEQ_OP_NAMES = Object.fromEntries(Object.entries(SEQ_OPS).map(([k, v]) => [v, k]));
 const SEQ_CONTINUE = 0x80;
@@ -685,9 +690,11 @@ function hex8(v) { return `0x${v.toString(16).padStart(2, '0')}`; }
 /* One line for an emulator transfer event (NAKed address bytes too). */
 function formatEmu(ev) {
   const h = (v) => v.toString(16).padStart(2, '0').toUpperCase();
-  if (ev.nak) return `I2C NAK address ${h(ev.address)} (byte ${h(ev.reg)}${ev.noStart ? ', no START before it' : ''})`;
+  const gap = ev.gap ? '(events dropped before this one) ' : '';
+  if (ev.nak) return `${gap}I2C NAK address ${h(ev.address)} (byte ${h(ev.reg)}${ev.noStart ? ', no START before it' : ''})`;
   const who = ev.bus === 'i2c' ? `I2C ${h(ev.address)}` : 'SPI';
-  return `${who} ${ev.read ? 'R' : 'W'} reg ${h(ev.reg)}: ${hex(ev.data)}${ev.truncated ? ' ..' : ''}`;
+  return `${gap}${who} ${ev.read ? 'R' : 'W'} reg ${h(ev.reg)}: ${hex(ev.data)}${ev.truncated ? ' ..' : ''}` +
+         (ev.suspect ? ' (suspect: CS window began before the emulator was ready)' : '');
 }
 
 /* --- the device ----------------------------------------------------------- */

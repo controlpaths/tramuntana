@@ -140,6 +140,7 @@ SPI master on DIO2 CS, DIO3 MISO, DIO4 MOSI, DIO5 SCK, and the SPI sniffer.
 |---|---|---|
 | `config(freq_hz=1_000_000, mode=0, lsb_first=False)` | clock (≥ 1 kHz, up to 75 MHz), mode 0–3, bit order | the clock in use |
 | `sel()` / `unsel()` | CS low / high | — |
+| `release()` | DIO2..5 back to plain inputs: CS/SCK/MOSI stop being driven (they stay driven after any transfer); the next transfer takes them again | — |
 | `write(data)` | send, CS untouched, MISO ignored | — |
 | `read(n, fill=0x00)` | read `n` bytes sending `fill`, CS untouched | bytes |
 | `xfer(data)` | full duplex, CS untouched | bytes clocked in |
@@ -283,7 +284,7 @@ The board as an I2C or SPI device, from a 256-byte register file.
 | `set_regs(offset, data)` | load 1..256 registers from `offset` (wraps at 256), also while running | — |
 | `regs(offset=0, n=256)` | read registers back | bytes |
 | `read_only(registers)` | registers whose writes are ignored; `[]` = all writable | — |
-| `status()` | `{bus: "off"/"i2c"/"spi", transfers, bytes_read, bytes_written, naks, starts, stops, bytes}`; the last three are low-level counters (START/STOP seen, bytes shifted) for diagnosing a bus | dict |
+| `status()` | `{bus: "off"/"i2c"/"spi", transfers, bytes_read, bytes_written, naks, starts, stops, bytes, dropped, late}`; `starts`/`stops`/`bytes` are low-level counters (START/STOP seen, bytes shifted) for diagnosing a bus; `dropped` = events the host didn't get (too many per second), `late` = SPI CS windows that began before the emulator was ready (firmware 1.3) | dict |
 
 Transfers arrive as [`EmuTransfer`](#1314-events) events. See the
 [emulated devices guide](10-emulated-devices.md).
@@ -305,6 +306,7 @@ continues.
 | `dio_read()` | read the levels |
 | `wait_dio(mask, value, timeout_us=1_000_000, keep_going=False)` | wait until `dio & mask == value & mask` |
 | `watch(mask)` | DIO watch on/off |
+| `pwm(dio, freq_hz, duty=50, invert=False)` / `pwm_sync(dio_mask=0)` | PWM output on/off (`freq_hz=0` stops it) and phase sync (firmware 1.3) |
 | `awg_dc(volts)` | AOUT0 level |
 | `adc_read(channel=0)` | one ADC reading |
 | `i2c_write(address, data, keep_going=False)` | I2C write |
@@ -388,7 +390,7 @@ each next one (`0` only drains the queue).
 | SPI message (CS low..high) | `SpiMessage` |
 | I2C message (START..STOP) | `I2cMessage` |
 | edge on a watched DIO | `DioEdge(t_us, levels, changed, lost)` |
-| emulator transfer | `EmuTransfer(t_us, bus, read, address, reg, data, truncated, nak, no_start)`; `nak` = an I2C address byte not answered (`reg` holds the raw byte) |
+| emulator transfer | `EmuTransfer(t_us, bus, read, address, reg, data, truncated, nak, no_start, suspect, gap)`; `nak` = an I2C address byte not answered (`reg` holds the raw byte); for reads `data` is what went out on the bus; `suspect` = SPI window that began before the emulator was ready; `gap` = events were dropped before this one (firmware 1.3) |
 | DTR/RTS change on the bridge port | `LineChange(t_us, dtr, rts)` |
 | sequencer run finished | `SeqDone(t_us, state, error, pc, result_len)` |
 | capture finished | `{"event": "capture_done", "instrument": "scope"/"logic", "state": ...}` |
@@ -466,8 +468,14 @@ Host-side analysis of captures; see the
 | `uart(cap, pin, baud, bits=8, parity="none", stop_bits=1, invert=False)` | list of `UartFrame(t_s, value, parity_error, framing_error)` |
 | `guess_baud(cap, pin)` | nearest standard rate within 6 %, else the raw estimate; `None` with too few edges |
 | `uart_text(frames)` | text, non-printables as `\xNN` |
-| `i2c(cap, scl=6, sda=7)` | list of `I2cTransfer(t_s, message, stopped, partial_bits, scl_hz)` |
-| `spi(cap, cs=2, sck=5, mosi=4, miso=3, mode=0, lsb_first=False, word_bits=8)` | list of `SpiTransfer(t_s, mosi, miso, partial_bits, sck_hz, complete)`; `cs=None` = no CS line |
+| `i2c(cap, scl=6, sda=7)` | list of `I2cTransfer(t_s, message, stopped, partial_bits, scl_hz, bit_rate_hz)` |
+| `spi(cap, cs=2, sck=5, mosi=4, miso=3, mode=0, lsb_first=False, word_bits=8)` | list of `SpiTransfer(t_s, mosi, miso, partial_bits, sck_hz, complete, bit_rate_hz)`; `cs=None` = no CS line |
+
+`sck_hz` / `scl_hz` is the clock: the median period between sampling
+edges. `bit_rate_hz` is the bits per second over the whole transfer, with
+the pauses between bytes and clock stretching included (lower than the
+clock when the master pauses, e.g. 0.86 MHz for this board's own 1 MHz
+SPI master).
 | `measure(cap, ch=0, min_amplitude=0.05)` | dict: `low`, `high`, `amplitude`, `overshoot_pct`, `undershoot_pct`, `rise_time_s`, `fall_time_s`, `freq_hz`, `period_s`, `duty_pct`, `first_rise_s`, `first_fall_s`, `rising_edges`, `falling_edges`, `sample_period_s`; `dc`/`mean` for a flat signal; `edge_at_resolution_limit` |
 
 `STANDARD_BAUDS` lists the rates `guess_baud` snaps to.

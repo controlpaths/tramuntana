@@ -41,6 +41,8 @@ finished.
 | `adc_read` | channel | volts |
 | `mark` | id | the id (a timestamp to measure against) |
 | `watch` | mask | — (same as `dio_watch`) |
+| `pwm` | dio, freq_hz, duty, invert | — (same as `pwm.set`; `freq_hz=0` stops that DIO; firmware 1.3) |
+| `pwm_sync` | dio_mask | — (same as `pwm.sync`; firmware 1.3) |
 | `loop` … `end_loop` | count | — (one level of nesting) |
 | `logic_arm` | the logic analyzer's arm arguments | sample rate; read the capture afterwards |
 | `scope_arm` | the scope's arm arguments | sample rate; read the capture afterwards |
@@ -178,8 +180,14 @@ It returns each step's time (µs from the first), result and status. See
   sequence for timing tighter than that.
 - The sequencer runs above most of the firmware's threads, so other work
   doesn't stretch its busy waits (interrupts still can, see above). While it busy-waits, lower-priority work catches up
-  afterwards: sniffer decoding, event delivery and the display. Nothing is
-  lost, and board timestamps stay exact. The UART bridge runs above the
+  afterwards: sniffer decoding, event delivery and the display. Board
+  timestamps stay exact, and sniffer data waits in its ring; emulator
+  events queue up to 64 and the rest are dropped and counted
+  (see [emulated devices](10-emulated-devices.md#102-the-register-model)).
+  The API port is served below the sequencer too: a run that never pauses
+  (thousands of back-to-back bus steps) also holds back the reply to
+  `SEQ_RUN` itself, and past ~2 s the library reports *no reply*. Keep such
+  runs short and repeat them, or add a `delay_ms` step now and then. The UART bridge runs above the
   sequencer, so the target's bytes, baud rate changes and DTR/RTS keep
   flowing during a run.
 - Steps that drive pins behave exactly like the corresponding commands:

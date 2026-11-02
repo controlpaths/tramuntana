@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tramuntana"
-version = "2.2.0"
+version = "2.3.0"
 description = "Host library, CLI and MCP server for the Tramuntana Lite hardware hacking tool (RP2350 + Zephyr)"
 readme = "README.md"
 requires-python = ">=3.8"

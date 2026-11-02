@@ -41,7 +41,7 @@ OP_NAMES = {
     0x06: "dio_read", 0x07: "wait_dio", 0x08: "i2c_write", 0x09: "i2c_read",
     0x0A: "i2c_write_read", 0x0B: "spi_txn", 0x0C: "uart_send", 0x0D: "awg_dc", 0x0E: "adc_read",
     0x0F: "mark", 0x10: "loop", 0x11: "end_loop", 0x12: "logic_arm", 0x13: "scope_arm",
-    0x14: "watch", 0x15: "delay_ms",
+    0x14: "watch", 0x15: "delay_ms", 0x16: "pwm", 0x17: "pwm_sync",
 }
 STATES = ["idle", "running", "done", "failed", "aborted", "timeout", "invalid"]
 
@@ -117,6 +117,19 @@ class Sequence:
     def watch(self, mask: int) -> "Sequence":
         """Same as ``Tramuntana.dio_watch()``, from inside the run."""
         return self._add(0x14, bytes([mask & 0xFF]), f"watch {mask:#04x}")
+
+    def pwm(self, dio: int, freq_hz: float, duty: float = 50.0, invert: bool = False,
+            keep_going: bool = False) -> "Sequence":
+        """Same as ``Pwm.set()`` from inside the run (firmware >= 1.3);
+        ``freq_hz=0`` stops the PWM on that DIO (``Pwm.stop()``)."""
+        f = int(round(freq_hz))
+        desc = f"pwm DIO{dio} stop" if f == 0 else f"pwm DIO{dio} {f} Hz {duty:g} %" + (" inv" if invert else "")
+        return self._add(0x16, struct.pack("<BIHB", dio, f, int(round(duty * 100)), int(invert)), desc,
+                         keep_going)
+
+    def pwm_sync(self, dio_mask: int = 0) -> "Sequence":
+        """Same as ``Pwm.sync()`` from inside the run (firmware >= 1.3)."""
+        return self._add(0x17, bytes([dio_mask & 0xFF]), f"pwm_sync {dio_mask:#04x}")
 
     def awg_dc(self, volts: float) -> "Sequence":
         return self._add(0x0D, struct.pack("<H", int(round(volts * 1000))), f"awg_dc {volts:g} V")

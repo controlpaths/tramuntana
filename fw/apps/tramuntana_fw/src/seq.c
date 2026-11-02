@@ -22,6 +22,7 @@
 #include "logic.h"
 #include "scope.h"
 #include "watch.h"
+#include "pwm.h"
 #include "bridge.h"
 #include "display.h"
 
@@ -61,6 +62,7 @@ static int op_len(uint16_t pc)
   case SEQ_ADC_READ:
   case SEQ_MARK:
   case SEQ_WATCH:
+  case SEQ_PWM_SYNC:
     n = 2;
     break;
   case SEQ_DIO_DIR:
@@ -76,6 +78,9 @@ static int op_len(uint16_t pc)
     break;
   case SEQ_WAIT_DIO:
     n = 7;
+    break;
+  case SEQ_PWM:
+    n = 9;
     break;
   case SEQ_I2C_WRITE:
     n = rem >= 3 ? 3 + c[2] : -1;
@@ -234,6 +239,17 @@ static int exec_step(const uint8_t *c, uint8_t *d, uint8_t *dn)
     return 0;
   case SEQ_WATCH:
     return watch_set(c[1]);
+  case SEQ_PWM:
+    if (c[1] >= DIO_COUNT) {
+      return -EINVAL;
+    }
+    if (rd32(c + 2) == 0) {
+      pwm_out_stop(BIT(c[1]));
+      return 0;
+    }
+    return pwm_out_set(c[1], rd32(c + 2), rd16(c + 6), (c[8] & 1) != 0, NULL);
+  case SEQ_PWM_SYNC:
+    return pwm_out_sync(c[1]);
   case SEQ_LOGIC_ARM: {
     const uint8_t *p = c + 1;
     struct logic_params lp = {

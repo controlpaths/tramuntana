@@ -195,7 +195,7 @@ replies to UART_STATUS with the first four fields only.)
 | 64 | EMU_I2C | on u8; if on: addr u8, scl_dio u8, sda_dio u8, pullups u8 | — (on = 0 stops any emulator) |
 | 65 | EMU_SPI | on u8; if on: mode u8, cs u8, sck u8, mosi u8, miso u8, addr_mask u8, read_mask u8, read_value u8, status u8 | — |
 | 66 | EMU_REGS | op u8 = 0: offset u8, data[1..256] (set) · op 1: offset u8, n u16 (get) · op 2: mask[32] (read-only bitmap, bit r = register r) | op 1: data[n]; else — |
-| 67 | EMU_STATUS | — | kind u8 (0 off, 1 i2c, 2 spi), transfers u32, bytes_read u32, bytes_written u32, naks u32, starts u32, stops u32, bytes u32 |
+| 67 | EMU_STATUS | — | kind u8 (0 off, 1 i2c, 2 spi), transfers u32, bytes_read u32, bytes_written u32, naks u32, starts u32, stops u32, bytes u32, dropped u32, late u32. `starts`..`bytes` since 1.1; `dropped` (EVT_EMU events lost to a full queue) and `late` (SPI CS windows that began before the shifters were rearmed) since 1.3: older firmware sends a shorter reply |
 
 ### Sequencer (0x68..0x6C)
 
@@ -236,6 +236,8 @@ replies to UART_STATUS with the first four fields only.)
 | 13 | SCOPE_ARM | the 12 bytes of SCOPE_ARM | rate u32 |
 | 14 | WATCH | mask u8 | — |
 | 15 | DELAY_MS | ms u32 | — |
+| 16 | PWM | dio u8, freq_hz u32 (0 = stop the PWM on that DIO), duty u16 (0.01 %), flags u8 (bit0 invert) — as PWM_SET; since 1.3 | — |
+| 17 | PWM_SYNC | dio_mask u8 — as PWM_SYNC; since 1.3 | — |
 
 **Records** (SEQ_RESULT), one per executed step:
 
@@ -254,7 +256,7 @@ pc u16 | op u8 | status u8 | t_us u32 | len u8 | data[len]
 | F2 | EVT_I2C_MSG | flags u8 (bit0 overrun, bit1 truncated, bit7 stamped), [t_us u32 if stamped], records (type u8, value u8)*: 1 START (value = address byte), 2 ACK (1) / NAK (0), 3 DATA, 4 STOP |
 | F3 | EVT_CAPTURE_DONE | instrument u8 (0 scope, 1 logic), state u8 |
 | F4 | EVT_DIO | t_us u32, levels u8, changed u8, lost u8 |
-| F5 | EVT_EMU | t_us u32, kind u8 (1 i2c, 2 spi), flags u8 (bit0 read, bit1 NAK, bit2 truncated, bit3 no START), addr u8, reg u8, data[≤ 32]. With NAK: an I2C address byte not answered, addr = byte >> 1, reg = the raw byte |
+| F5 | EVT_EMU | t_us u32, kind u8 (1 i2c, 2 spi), flags u8 (bit0 read, bit1 NAK, bit2 truncated, bit3 no START, bit4 suspect, bit5 gap), addr u8, reg u8, data[≤ 32]. With NAK: an I2C address byte not answered, addr = byte >> 1, reg = the raw byte. For reads, data is what went out (since 1.3: I2C, bytes read back from SDA; SPI, the response row fed to MISO). bit4 (1.3): SPI CS window that began before the emulator was rearmed, decoded out of step. bit5 (1.3): events were dropped before this one (see EMU_STATUS `dropped`) |
 | F6 | EVT_LINE | t_us u32, dtr u8, rts u8 |
 | F7 | EVT_SEQ_DONE | t_us u32, state u8, error u8, pc u16, result_len u16 |
 

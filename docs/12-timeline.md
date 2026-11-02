@@ -35,7 +35,7 @@ while you are thinking, is lost.
 | `uart_tx` | what the host sent to the target | host |
 | `i2c`, `spi` | messages from the sniffers | board: the START / CS edge |
 | `dio` | edges on watched DIOs | board: the edge |
-| `emu` | transfers between the target and an [emulated device](10-emulated-devices.md) | board |
+| `emu` | transfers between the target and an [emulated device](10-emulated-devices.md); reads show what went out on the bus. Best effort: at thousands of transfers a second some are dropped, and the next entry says *events dropped before this one* (count them with `t.emu.status()["dropped"]`) | board |
 | `line` | DTR/RTS changes on the bridge port ([control lines](09-uart-bridge.md#92-control-lines-resetboot)) | board |
 | `seq` | end of a [sequencer](11-sequencer.md) run | board |
 | `capture` | a scope / logic capture finished | host arrival |

@@ -81,7 +81,9 @@ More in [I2C](05-i2c.md#53-diagnosing-a-bus).
 | the target's master gets NAKs / timeouts | the master doesn't support clock stretching; or the address differs (7-bit) |
 | two devices answer | the real device is still on the bus at the same address |
 | SPI: first response byte wrong | SCK too fast for the first bit (modes 1/3 above ~2 MHz) |
-| SPI: transactions merge | CS high time between transactions under 10 µs |
+| SPI: MSB wrong in the bytes after the first | SCK too fast in modes 0/2 (above ~7 MHz) |
+| SPI: transactions lost or garbled, `late` counting | CS high too short between transactions: give it tens of µs (firmware before 1.3: 200 µs after a write) |
+| fewer `emu` events than transfers | the host can't take them that fast: `status()["dropped"]` counts them; the counters are complete |
 | writes not stored | the register is marked read-only (`read_only([])` clears) |
 
 ## Timeline and DIO watch

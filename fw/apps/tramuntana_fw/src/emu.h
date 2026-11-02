@@ -9,7 +9,8 @@
  * on every byte, reads return regs[ptr++], writes store into regs[ptr++]
  * unless the register is marked read-only (the write is still ACKed, as
  * real devices do with read-only registers). Every completed transfer is
- * reported to the host as an EVT_EMU event.
+ * reported to the host as an EVT_EMU event (best effort: events the host
+ * can't take fast enough are dropped and counted in 'dropped').
  *
  *   I2C  one 7-bit address. First written byte = register pointer, the
  *        rest are data; a read starts at the current pointer (so the
@@ -28,7 +29,10 @@
  *        0x7F. A table per command byte makes the response start without
  *        CPU help, but the first response bit still has to be ready
  *        half a clock after the command: keep SCK at or below about
- *        2 MHz, and CS high for >= 10 us between transactions.
+ *        2 MHz. Between transactions CS has to stay high for the CPU to
+ *        rearm the shifters (a few us, plus the interrupt latency); a
+ *        window that starts earlier is counted in 'late' and its
+ *        EVT_EMU is flagged suspect.
  *
  * Only one emulator at a time; both use PIO1 and claim their pins
  * exclusively (owner "emu").
@@ -68,6 +72,12 @@ struct emu_stats {
   uint32_t starts;    /* I2C START / repeated START seen; SPI: CS rises */
   uint32_t stops;     /* I2C STOP seen */
   uint32_t bytes;     /* bytes the shifters handed to the CPU */
+  /* since 1.3 */
+  uint32_t dropped;   /* EVT_EMU events lost because the queue was full */
+  uint32_t late;      /* SPI: CS windows that began before the shifters were rearmed */
+  /* SPI: worst time from entering the ISR on a CS rise to the shifters
+   * being ready for the next transaction, in sysclk cycles (shell only) */
+  uint32_t rearm_max_cyc;
 };
 
 void emu_init(void);

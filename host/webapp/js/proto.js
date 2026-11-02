@@ -226,6 +226,7 @@ function decodeEmuEvent(p) {
   return {
     type: 'emu', tUs: P.rd32(p, 0), bus: p[4] === 1 ? 'i2c' : 'spi', read: !!(p[5] & 1),
     nak: !!(p[5] & 2), truncated: !!(p[5] & 4), noStart: !!(p[5] & 8),
+    suspect: !!(p[5] & 16), gap: !!(p[5] & 32),   /* fw 1.3 */
     address: p[6], reg: p[7], data: p.slice(8),
   };
 }

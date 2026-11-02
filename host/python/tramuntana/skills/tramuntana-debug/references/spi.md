@@ -24,7 +24,11 @@ Bus on J1: DIO2 = CS (active low), DIO3 = MISO, DIO4 = MOSI, DIO5 = SCK.
    trigger="falling", pin=2, decode="spi")` triggers on CS. Then
    `spi_transaction`, then `logic_read(decode="spi")`. Check that SCK idles
    at the CPOL level, that CS stays low for the whole command, that MISO
-   changes on the opposite edge to the one sampled, and `sck_hz`.
+   changes on the opposite edge to the one sampled, and `sck_hz` (the real
+   clock; `bit_rate_hz` is lower when the master pauses between bytes).
+   This board's own master takes ~50 us from CS low to the first SCK edge
+   and pauses ~100 us between the write and the read phase of
+   `spi_transaction`: that is the tool, not the target.
 5. **Speed.** Works at 1 MHz but not at 20 MHz → wiring length/ringing or the
    device's max clock. Long jumper wires rarely work above a few MHz.
 

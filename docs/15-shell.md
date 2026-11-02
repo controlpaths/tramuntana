@@ -122,7 +122,7 @@ While a sniffer is on, every message is echoed as one line.
 | `emu spi <mode> [cs sck mosi miso] [amask rmask rval status]` | answer as a SPI device (masks in hex) |
 | `emu set <reg> <hex..>` | load registers |
 | `emu regs [reg] [n]` | dump registers |
-| `emu status` | counters |
+| `emu status` | counters, events dropped and, for SPI, late CS windows and the worst CS-rise-to-rearm time |
 | `emu off` | stop |
 
 ## Sequencer

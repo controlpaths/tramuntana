@@ -89,11 +89,12 @@ link error (a replugged board, new firmware).
 |---|---|
 | Board | `list_boards`, `connect(port?, serial_number?)`, `disconnect`, `board_info`, `board_status`, `power(on?)`, `pullups(on?)`, `led(colour)`, `display_text(text)`, `display_pinout(seconds?)`, `adc_read(channel?)`, `bootloader` |
 | GPIO | `dio_read`, `dio_set_direction(mask, out_mask)`, `dio_write(mask, value)` |
-| SPI master | `spi_config(freq_hz?, mode?, lsb_first?)`, `spi_transaction(write, read_n?)`, `spi_xfer(data, manage_cs?)`, `spi_select(active)`, `spi_write(data)`, `spi_read(n, fill?)` |
+| SPI master | `spi_config(freq_hz?, mode?, lsb_first?)`, `spi_transaction(write, read_n?, release?)`, `spi_xfer(data, manage_cs?)`, `spi_select(active)`, `spi_write(data)`, `spi_read(n, fill?)`, `spi_release` |
 | I2C master | `i2c_config(freq_hz?, pullups?)`, `i2c_scan`, `i2c_write(address, data)`, `i2c_read(address, n)`, `i2c_write_read(address, write, n)`, `i2c_sequence(steps)` (low-level start/write/read/stop list), `i2c_bus_reset` |
 | Sniffers | `sniff_start(bus, spi_mode?, i2c_pullups?)`, `sniff_read(duration_s?, max_messages?)`, `sniff_stop(bus?)` |
 | Scope | `scope_capture(n?, channels?, rate_hz?, trigger?, level_v?, pre?, timeout_ms?, wait?, max_points?, csv_path?)`, `scope_read(...)`, `scope_image(t_from_us?, t_to_us?)` |
 | Waveform generator | `awg_set(shape, freq_hz, amp_v?, offset_v?, param?)`, `awg_arbitrary(samples, freq_hz, ...)`, `awg_dc(volts)`, `awg_step(from_v, to_v, delay_ms)`, `awg_off`, `awg_status` |
+| PWM outputs | `pwm_set(dio, freq_hz, duty?, invert?)`, `pwm_phase(dio, degrees)`, `pwm_sync(dio_mask?)`, `pwm_stop(dio_mask?)`, `pwm_status` |
 | Logic analyzer | `logic_capture(n?, rate_hz?, trigger?, pin?, mask?, value?, pre?, timeout_ms?, wait?, channels?, max_edges?, vcd_path?, csv_path?, names?, decode?, max_items?)`, `logic_read(...)`, `logic_decode(protocol, ...)`, `logic_image(t_from_us?, t_to_us?, channels?, names?)` |
 | UART bridge | `uart_open(baud?, parity?, stop_bits?, dtr?, rts?)`, `uart_send(data, as_hex?, newline?, wait_s?, until?)`, `uart_read(timeout_s?, until?, max_bytes?)`, `uart_close`, `uart_status`, `uart_ctrl(mode?, reset_dio?, boot_dio?)`, `uart_set_lines(dtr?, rts?, pulse_ms?)` |
 | Timeline | `timeline_start(watch_dios?, dio_names?, clear?)`, `timeline_read(since_s?, until_s?, sources?, contains?, last?)`, `timeline_mark(label)`, `timeline_stop` |
@@ -127,6 +128,26 @@ its arguments and when to use it.
   [Sequencer](11-sequencer.md#115-from-the-ai-tools).
 - **Hex everywhere.** Byte strings are hex (`"9f 00 ff"`, `"9f00ff"`,
   `"0x9f,0x00"`); I2C addresses are 7-bit integers.
+- **Signal names by DIO.** `names` in `logic_capture`, `logic_read` and
+  `logic_image` is a map `{"2": "CS", "5": "SCK"}`; DIOs left out keep
+  their `DIOi` name. (Before host package 2.3 it was a list, positional in
+  one tool and per-channel in the other.)
+- **Release what drives pins.** The SPI master keeps CS high and SCK/MOSI
+  driven after a transaction, PWM outputs run until stopped, and an
+  emulator holds its pins. Before the target (or another instrument)
+  drives the same DIOs, call `spi_release` (or `spi_transaction(...,
+  release=true)`), `pwm_stop` or `emu_stop`; `board_status` shows who owns
+  each DIO. Otherwise two outputs fight on one wire, and the results of the
+  tests that follow are not valid.
+- **Limits per call.** `logic_capture` waits up to 60 s per arm; a longer
+  `timeout_ms` (with `wait=true`) re-arms every 60 s, and the result
+  counts the `rearms` (a trigger in the few ms between two arms is missed).
+  `sniff_read` returns at most 1000 messages per call; the rest stay
+  `pending`.
+- **Emulator events are best effort.** At thousands of transfers a second
+  some don't reach the host: `emu_status` counts them in `dropped`, and the
+  transfer and byte counters are complete. Compare counters, not log
+  entries, before concluding that a transfer was lost.
 
 ## 19.3 The skill
 

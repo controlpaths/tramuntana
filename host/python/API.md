@@ -145,6 +145,7 @@ does a whole transaction in one request. Words are 8 bits.
 |---|---|---|
 | `config(freq_hz=1_000_000, mode=0, lsb_first=False)` | clock (≥ 1 kHz, clamped to 75 MHz), mode 0..3, bit order | frequency in use |
 | `sel()` / `unsel()` | CS low / high | — |
+| `release()` | DIO2..5 back to plain inputs: CS/SCK/MOSI stop being driven (they stay driven after any transfer); the next transfer takes them again | — |
 | `write(data)` | send, CS untouched, MISO ignored; any length | — |
 | `read(n, fill=0x00)` | read `n` bytes sending `fill`, CS untouched; any length | bytes |
 | `xfer(data)` | full duplex, CS untouched; any length | bytes clocked in |
@@ -399,10 +400,15 @@ read-only (the write is still ACKed). The register file survives `stop()`.
 | `stop()` | stop and release the pins |
 | `set_regs(offset, data)` / `regs(offset=0, n=256)` | load / read back registers (also while running) |
 | `read_only(registers)` | registers whose writes are ignored; `[]` = all writable |
-| `status()` | `{bus, transfers, bytes_read, bytes_written, naks}` |
+| `status()` | `{bus, transfers, bytes_read, bytes_written, naks}`, plus `starts`, `stops`, `bytes` (fw 1.1) and `dropped`, `late` (fw 1.3) |
 
 Every transfer is reported as an [`EmuTransfer`](#events-and-sniffers)
-event (what the target read or wrote, from which register).
+event (what the target read or wrote, from which register). Events are
+best effort: at thousands of transfers a second some are dropped,
+`status()["dropped"]` counts them and the next event has `gap=True`; the
+other counters see every transfer. SPI windows that began before the
+emulator was ready are counted in `late` and their event has
+`suspect=True`.
 
 ```python
 t.emu.set_regs(0xD0, b"\x60")                 # BME280 chip id
@@ -457,6 +463,7 @@ for step in r.steps:
 | `awg_dc(volts)`, `adc_read(channel)` | — / volts |
 | `mark(id)` | the id (a timestamp to measure against) |
 | `watch(mask)` | — (as `dio_watch`) |
+| `pwm(dio, freq_hz, duty=50, invert=False)`, `pwm_sync(dio_mask=0)` | — (as `pwm.set` / `pwm.sync`; `freq_hz=0` stops; fw 1.3) |
 | `loop(count)` ... `end_loop()` | — (one level) |
 | `logic_arm(...)`, `scope_arm(...)` | sample rate; read the capture afterwards |
 
@@ -532,7 +539,7 @@ yields:
 | SPI transaction (CS low..high) | [`SpiMessage`](#spimessage) |
 | I2C message (START..STOP) | [`I2cMessage`](#i2cmessage) |
 | edge on a watched DIO | `DioEdge(t_us, levels, changed, lost)` |
-| transfer with the emulated device | `EmuTransfer(t_us, bus, read, address, reg, data, truncated)` |
+| transfer with the emulated device | `EmuTransfer(t_us, bus, read, address, reg, data, truncated, nak, no_start, suspect, gap)`; for reads `data` is what went out on the bus (fw 1.3) |
 | host changed DTR/RTS on the bridge port | `LineChange(t_us, dtr, rts)` |
 | sequencer run finished | `SeqDone(t_us, state, error, pc, result_len)` |
 | capture finished | `{"event": "capture_done", "instrument": "scope" \| "logic", "state": ...}` |
@@ -621,8 +628,8 @@ with Tramuntana() as t:
 | `uart(cap, pin, baud, bits=8, parity="none", stop_bits=1, invert=False)` | `[UartFrame]`: `t_s`, `value`, `parity_error`, `framing_error` |
 | `uart_text(frames)` | the characters as text, non-printables as `\xNN` |
 | `guess_baud(cap, pin)` | nearest standard rate (within 6 %), else the raw estimate; `None` with too few edges |
-| `i2c(cap, scl=6, sda=7)` | `[I2cTransfer]`: `t_s`, `message` (an [`I2cMessage`](#i2cmessage)), `stopped`, `partial_bits`, `scl_hz` |
-| `spi(cap, cs=2, sck=5, mosi=4, miso=3, mode=0, lsb_first=False, word_bits=8)` | `[SpiTransfer]`: `t_s`, `mosi`, `miso` (lists of words), `partial_bits`, `sck_hz`, `complete`. `cs=None` decodes the whole capture as one transfer |
+| `i2c(cap, scl=6, sda=7)` | `[I2cTransfer]`: `t_s`, `message` (an [`I2cMessage`](#i2cmessage)), `stopped`, `partial_bits`, `scl_hz` (median clock), `bit_rate_hz` (stretching included) |
+| `spi(cap, cs=2, sck=5, mosi=4, miso=3, mode=0, lsb_first=False, word_bits=8)` | `[SpiTransfer]`: `t_s`, `mosi`, `miso` (lists of words), `partial_bits`, `sck_hz` (median clock), `complete`, `bit_rate_hz` (pauses between bytes included). `cs=None` decodes the whole capture as one transfer |
 | `measure(cap, ch=0, min_amplitude=0.05)` | dict: `low`, `high`, `amplitude`, `overshoot_pct`, `undershoot_pct`, `rise_time_s`, `fall_time_s` (10-90 %, median), `freq_hz`, `period_s`, `duty_pct`, `first_rise_s`, `first_fall_s`, `rising_edges`, `falling_edges`, `sample_period_s`; `dc: True` and `mean` for a flat signal; `edge_at_resolution_limit` when an edge takes one sample |
 
 Times (`t_s`, `first_*_s`) are seconds from the trigger.

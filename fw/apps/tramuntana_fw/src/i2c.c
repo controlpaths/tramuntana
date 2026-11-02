@@ -541,7 +541,7 @@ static struct {
   PIO pio;
   uint sm;
   uint offset;
-  uint16_t instr[24];
+  uint16_t instr[26];
   struct pio_program program;
   struct dma_ring ring;
   uint32_t rd;
@@ -566,17 +566,26 @@ K_THREAD_STACK_DEFINE(i2c_sniff_stack, 2048);
  *   10  out y, 1            ;  | a START/STOP - and SCL (y again) for
  *   11  jmp !y, 0           ;  | the falling edge
  *   12  jmp 7               ; /
- *   13  mov x, y            ; SDA changed: remember the new level
- *   14  jmp !x, 19          ; fell -> START
- *   15  set y, 3            ; \
- *   16  mov isr, y          ;  | rose -> push STOP
- *   17  push noblock        ;  |
- *   18  jmp 7               ; /
- *   19  irq set 0           ; stamp it (stamp.c)
- *   20  set y, 2            ; \
- *   21  mov isr, y          ;  | push START
- *   22  push noblock        ;  |
- *   23  jmp 7               ; /
+ *   13  mov x, y [6]        ; SDA changed: remember the new level, and
+ *   14  jmp pin 16          ;   only call it a condition if SCL is still
+ *   15  jmp 0               ;   high ~50 ns later (else: SDA moved just
+ *                           ;   after SCL fell - data, back to 0)
+ *   16  jmp !x, 21          ; fell -> START
+ *   17  set y, 3            ; \
+ *   18  mov isr, y          ;  | rose -> push STOP
+ *   19  push noblock        ;  |
+ *   20  jmp 7               ; /
+ *   21  irq set 0           ; stamp it (stamp.c)
+ *   22  set y, 2            ; \
+ *   23  mov isr, y          ;  | push START
+ *   24  push noblock        ;  |
+ *   25  jmp 7               ; /
+ *
+ * 13..15 are there for slaves that change SDA very soon after SCL falls
+ * (I2C asks for 300 ns of hold, some give a few tens): the sample at 7
+ * can catch SDA already moved while SCL still reads high, and a data bit
+ * became a START or a STOP. A real condition keeps SCL high for hundreds
+ * of ns more (tHD;STA, tSU;STO), so the second look costs nothing.
  */
 static void i2c_sniff_program(void)
 {
@@ -595,21 +604,23 @@ static void i2c_sniff_program(void)
   i[10] = pio_encode_out(pio_y, 1);
   i[11] = pio_encode_jmp_not_y(0);
   i[12] = pio_encode_jmp(7);
-  i[13] = pio_encode_mov(pio_x, pio_y);
-  i[14] = pio_encode_jmp_not_x(19);
-  i[15] = pio_encode_set(pio_y, EV_STOP);
-  i[16] = pio_encode_mov(pio_isr, pio_y);
-  i[17] = pio_encode_push(false, false);
-  i[18] = pio_encode_jmp(7);
-  i[19] = pio_encode_irq_set(false, STAMP_PIO_FLAG);
-  i[20] = pio_encode_set(pio_y, EV_START);
-  i[21] = pio_encode_mov(pio_isr, pio_y);
-  i[22] = pio_encode_push(false, false);
-  i[23] = pio_encode_jmp(7);
+  i[13] = pio_encode_mov(pio_x, pio_y) | pio_encode_delay(6);
+  i[14] = pio_encode_jmp_pin(16);
+  i[15] = pio_encode_jmp(0);
+  i[16] = pio_encode_jmp_not_x(21);
+  i[17] = pio_encode_set(pio_y, EV_STOP);
+  i[18] = pio_encode_mov(pio_isr, pio_y);
+  i[19] = pio_encode_push(false, false);
+  i[20] = pio_encode_jmp(7);
+  i[21] = pio_encode_irq_set(false, STAMP_PIO_FLAG);
+  i[22] = pio_encode_set(pio_y, EV_START);
+  i[23] = pio_encode_mov(pio_isr, pio_y);
+  i[24] = pio_encode_push(false, false);
+  i[25] = pio_encode_jmp(7);
 
   sniff.program = (struct pio_program){
     .instructions = sniff.instr,
-    .length = 24,
+    .length = 26,
     .origin = -1,
     .pio_version = 0,
     .used_gpio_ranges = BIT(0),
@@ -669,6 +680,7 @@ static int sniff_hw_start(void)
   c = pio_get_default_sm_config();
   sm_config_set_wrap(&c, sniff.offset, sniff.offset + sniff.program.length - 1);
   sm_config_set_in_pins(&c, SDA);              /* bit0 SDA, bit1 SCL */
+  sm_config_set_jmp_pin(&c, SCL);
   sm_config_set_in_shift(&c, false, false, 32);
   sm_config_set_out_shift(&c, true, false, 32);
   sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);

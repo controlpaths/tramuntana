@@ -93,6 +93,15 @@ Then:
   reports it rather than hanging or using garbage.
 - **Slow device:** the emulator can't delay answers. Use a real part for
   timing problems.
+- **Counting transfers:** `emu_status` counters (`transfers`, `bytes_read`,
+  `bytes_written`) see everything; the `recent` list and the timeline are
+  best effort, and at thousands of transfers a second `dropped` says how
+  many entries are missing. A "lost write" in the log with `dropped > 0` is
+  probably a missing log entry, not a lost write. SPI entries marked
+  `suspect` (counted in `late`) are CS windows that began before the
+  emulator was ready: the target's master leaves CS high too briefly.
+- **Half-updated blocks:** writes land byte by byte, so reading a register
+  block the target is rewriting can return part old, part new data.
 
 SPI: the default command format (bit 7 = read, 7-bit register, auto-
 increment) fits most sensors. For others set `read_mask` / `read_value` /

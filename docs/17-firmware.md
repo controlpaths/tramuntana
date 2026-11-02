@@ -16,7 +16,7 @@ of lessons learned.
 | MCU | RP2350A (Raspberry Pi Pico 2), Cortex-M33 core 0 at 150 MHz |
 | OS | Zephyr (board `rpi_pico2/rp2350a/m33`, plus an app-level devicetree overlay) |
 | Hardware access | Zephyr drivers for USB, UART, SPI0 (master), ADC, display (SPI1 + ST7735R); the Pico SDK's `hardware/*.h` directly for PIO, DMA, PWM, GPIO and the ADC FIFO |
-| Version | `FW_VERSION` in `src/version.h` (1.1.0); protocol version 1 |
+| Version | `FW_VERSION` in `src/version.h` (1.3.0); protocol version 1 |
 
 ## 17.2 Source layout
 
@@ -177,8 +177,15 @@ until the ISR has restarted the byte machine. SPI: an rx machine captures
 MOSI for the ISR, a "cs" machine flags CS rising, and a tx machine shifts
 `status`, turns the command byte into a response-table row address and
 pushes it. DMA channel A writes that address into channel B's
-`READ_ADDR_TRIG`, and channel B streams the row into the tx FIFO. Writes
-are applied, and the affected table rows rebuilt, at CS rising.
+`READ_ADDR_TRIG`, and channel B streams the row into the tx FIFO. Each
+written byte is stored, and copied into the table rows that show that
+register, as it arrives; at CS rising the ISR only rearms the shifters and
+then queues the transfer's event (1.1 rebuilt the rows there first, and
+was deaf for up to 160 µs after a write). The I2C ISR reads the START and
+STOP flags in one go, so a STOP and the next START that both land while
+it runs are served in bus order. The I2C byte machine holds SDA ~330 ns
+after SCL falls before changing it. Events go through a 64-deep queue;
+a full queue drops the event, counts it and marks the next one (`gap`).
 
 **Sequencer.** A thread interprets the bytecode (`seq.c`). Delays below
 2 ms are busy waits on the cycle counter; longer ones sleep in slices.

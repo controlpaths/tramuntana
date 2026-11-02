@@ -30,6 +30,9 @@
  *   0x13  SCOPE_ARM        as CMD_SCOPE_ARM (12 bytes)                rate u32
  *   0x14  WATCH            mask u8 (as CMD_DIO_WATCH)                 -
  *   0x15  DELAY_MS         ms u32 (sleeps)                            -
+ *   0x16  PWM              dio u8, freq_hz u32 (0 = stop), duty u16   -
+ *                          (0.01 %), flags u8 (bit 0 invert)
+ *   0x17  PWM_SYNC         dio_mask u8 (as CMD_PWM_SYNC)              -
  *
  * Every executed step appends a record to the result buffer:
  *
@@ -70,6 +73,8 @@ enum seq_op {
   SEQ_SCOPE_ARM = 0x13,
   SEQ_WATCH = 0x14,
   SEQ_DELAY_MS = 0x15,
+  SEQ_PWM = 0x16,        /* since 1.3 */
+  SEQ_PWM_SYNC = 0x17,
 };
 
 enum seq_state {

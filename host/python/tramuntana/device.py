@@ -391,6 +391,16 @@ class EmuTransfer:
         nak: an I2C address byte the emulator didn't answer (another
             device's address, or one without a START: ``no_start``); then
             ``address`` is the address it carried and ``reg`` the raw byte.
+        suspect: SPI, CS went low again before the emulator was ready for
+            it, so this window was decoded and answered out of step: what
+            the target sent or got may differ from ``data`` (firmware >= 1.3).
+        gap: the board dropped events before this one because the host did
+            not take them fast enough; ``Emu.status()["dropped"]`` counts
+            them (firmware >= 1.3).
+
+    For reads, ``data`` is what went out: I2C, the bytes read back from SDA
+    as they were sent; SPI, the response row fed to MISO (firmware >= 1.3;
+    before, the register contents when the event was logged).
     """
     t_us: int
     bus: str
@@ -401,14 +411,18 @@ class EmuTransfer:
     truncated: bool = False
     nak: bool = False
     no_start: bool = False
+    suspect: bool = False
+    gap: bool = False
 
     def __str__(self):
+        gap = "(events dropped before this one) " if self.gap else ""
         if self.nak:
-            return (f"EMU I2C NAK address {self.address:02X} (byte {self.reg:02X}"
+            return (f"EMU {gap}I2C NAK address {self.address:02X} (byte {self.reg:02X}"
                     + (", no START before it" if self.no_start else "") + ")")
         who = f"{self.bus.upper()} {self.address:02X}" if self.bus == "i2c" else "SPI"
-        return (f"EMU {who} {'R' if self.read else 'W'} reg {self.reg:02X}: {self.data.hex(' ')}"
-                + (" .." if self.truncated else ""))
+        return (f"EMU {gap}{who} {'R' if self.read else 'W'} reg {self.reg:02X}: {self.data.hex(' ')}"
+                + (" .." if self.truncated else "")
+                + (" (suspect: CS window began before the emulator was ready)" if self.suspect else ""))
 
 
 @dataclass
@@ -455,7 +469,8 @@ def decode_event(cmd: int, payload: bytes):
     if cmd == P.EVT_EMU:
         t, kind, flags, addr, reg = struct.unpack_from("<IBBBB", payload)
         return EmuTransfer(t, "i2c" if kind == 1 else "spi", bool(flags & 1), addr, reg,
-                           bytes(payload[8:]), bool(flags & 4), bool(flags & 2), bool(flags & 8))
+                           bytes(payload[8:]), bool(flags & 4), bool(flags & 2), bool(flags & 8),
+                           bool(flags & 16), bool(flags & 32))
     if cmd == P.EVT_LINE:
         t, dtr, rts = struct.unpack_from("<IBB", payload)
         return LineChange(t, bool(dtr), bool(rts))
@@ -477,6 +492,11 @@ class Spi:
     built from several calls; ``txn`` does a whole one in a single
     request. Transfers are 8-bit words. The pins are taken over from plain
     GPIO use automatically; the bus idles with CS high.
+
+    The pins stay driven after a transfer (CS high, SCK and MOSI at their
+    idle levels), so CS can be left where the host put it between calls.
+    Call ``release()`` when done, before wiring a target that drives
+    DIO2..5 itself; the next transfer takes the pins again.
     """
 
     def __init__(self, link: Link):
@@ -507,6 +527,11 @@ class Spi:
     def unsel(self):
         """Drives CS (DIO2) high."""
         self._l.request(P.CMD_SPI_UNSEL)
+
+    def release(self):
+        """Hands DIO2..5 back as plain GPIO inputs: CS, SCK and MOSI stop
+        being driven. Any later transfer takes them over again."""
+        self._l.request(P.CMD_DIO_DIR, bytes([0x3C, 0x00]))
 
     def write(self, data: bytes):
         """Sends bytes on MOSI without touching CS; MISO is discarded.
@@ -1330,7 +1355,12 @@ class Emu:
         """Returns:
             ``{"bus": "off" | "i2c" | "spi", "transfers", "bytes_read",
             "bytes_written", "naks"}`` (counters since the emulator started;
-            ``naks`` counts I2C transfers to other addresses).
+            ``naks`` counts I2C transfers to other addresses), plus
+            ``"starts", "stops", "bytes"`` (firmware >= 1.1) and
+            ``"dropped"`` (``EmuTransfer`` events lost because the host did
+            not take them fast enough) and ``"late"`` (SPI CS windows that
+            began before the emulator was ready, see
+            ``EmuTransfer.suspect``) with firmware >= 1.3.
         """
         r = self._l.request(P.CMD_EMU_STATUS)
         kind, txns, reads, writes, naks = struct.unpack_from("<BIIII", r)
@@ -1339,6 +1369,9 @@ class Emu:
         if len(r) >= 29:
             starts, stops, nbytes = struct.unpack_from("<III", r, 17)
             out.update({"starts": starts, "stops": stops, "bytes": nbytes})
+        if len(r) >= 37:
+            dropped, late = struct.unpack_from("<II", r, 29)
+            out.update({"dropped": dropped, "late": late})
         return out
 
 

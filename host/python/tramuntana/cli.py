@@ -132,6 +132,7 @@ def main(argv=None):
     ssub = p.add_subparsers(dest="scmd", required=True)
     s = ssub.add_parser("conf"); s.add_argument("freq"); s.add_argument("mode", type=int, nargs="?", default=0); s.add_argument("--lsb", action="store_true")
     ssub.add_parser("sel"); ssub.add_parser("unsel")
+    ssub.add_parser("release", help="stop driving DIO2..5 (back to plain inputs)")
     s = ssub.add_parser("write"); s.add_argument("bytes", nargs="+")
     s = ssub.add_parser("read"); s.add_argument("n", type=int)
     s = ssub.add_parser("xfer"); s.add_argument("bytes", nargs="+")
@@ -333,6 +334,8 @@ def run(t: Tramuntana, a) -> int:
             t.spi.sel()
         elif c == "unsel":
             t.spi.unsel()
+        elif c == "release":
+            t.spi.release()
         elif c == "write":
             t.spi.write(hexbytes(a.bytes))
         elif c == "read":

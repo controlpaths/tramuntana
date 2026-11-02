@@ -1350,6 +1350,11 @@ static int cmd_emu_status(const struct shell *sh, size_t argc, char **argv)
   shell_print(sh, "%s: %u transfers, %u bytes read, %u written, %u NAKed",
               st.kind == EMU_I2C ? "i2c" : st.kind == EMU_SPI ? "spi" : "off", st.txns, st.reads,
               st.writes, st.naks);
+  shell_print(sh, "%u events dropped", st.dropped);
+  if (st.kind == EMU_SPI) {
+    shell_print(sh, "%u CS windows started before the rearm; CS rise to rearmed: %u us worst",
+                st.late, st.rearm_max_cyc / (board_sysclk_hz() / 1000000));
+  }
   return 0;
 }
 

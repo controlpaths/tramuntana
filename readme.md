@@ -39,6 +39,53 @@ a usage guide for every instrument, and complete references for the
 Python library, the CLI, the shell, the binary protocol, the firmware
 internals, the webapp and the AI tools.
 
+## What's new
+
+### Firmware 1.3.0, host package 2.3.0
+
+Fixes found using the Tramuntana as the test bench of an FPGA module
+library.
+
+**Firmware**
+
+- SPI emulator: written bytes go into the response table as they arrive,
+  and the CS-rise interrupt rearms the shifters first. From CS rise to
+  ready now takes under 2 µs; before, it took up to 160 µs after a
+  write, and the next transaction was lost or garbled. A window that
+  still starts too early is counted (`late`) and its event flagged
+  `suspect`.
+- I2C emulator: the START and STOP flags are read in one go. A STOP and
+  the next START landing between two separate reads made the emulator
+  NAK its own address after a write.
+- I2C emulator: SDA is held ~330 ns after SCL falls (UM10204); it was
+  30–140 ns.
+- I2C sniffer: SCL must still be high a moment later before an SDA
+  change counts as a START/STOP, so a slave with a short SDA hold no
+  longer produces spurious STARTs or STOPs.
+- Emulator events: the queue grows from 16 to 64, dropped events are
+  counted and the next one is flagged (`gap`), reads log what went out
+  on the bus, and display refreshes are rate-limited.
+- Protocol: `EMU_STATUS` gains `dropped` and `late`; `EVT_EMU` flags
+  bit 4 = suspect, bit 5 = gap.
+- Sequencer: `PWM` (0x16) and `PWM_SYNC` (0x17) ops.
+
+**Host**
+
+- MCP server: `pwm_set` / `pwm_phase` / `pwm_sync` / `pwm_stop` /
+  `pwm_status` tools, `pwm` ops in `sequence_run`, `spi_release` and
+  `spi_transaction(release=)`, `names` as `{dio: name}`, and
+  `logic_capture` waits up to 1 h (re-arming every 60 s).
+- Library and CLI: `Spi.release()`, `tramuntana spi release`,
+  `Sequence.pwm()` / `pwm_sync()`.
+- Decoders: `sck_hz` / `scl_hz` are the median clock, and the new
+  `bit_rate_hz` gives the average including pauses.
+- `EmuTransfer.suspect` / `gap` and `Emu.status()` `dropped` / `late`;
+  the webapp shows them.
+
+**Docs:** measured SPI emulator speed limits, SPI master timing,
+releasing pins after use, best-effort emulator events; the AI skill is
+updated.
+
 ## Repository
 
 ```
@@ -131,6 +178,7 @@ board rejected the command (NAK, busy, bad argument…), 3 on a link error.
 | `tramuntana spi conf <freq> [mode] [--lsb]` | clock (up to 75 MHz), mode 0–3 (default 0), LSB first; prints the actual clock |
 | `tramuntana spi sel` | CS low |
 | `tramuntana spi unsel` | CS high |
+| `tramuntana spi release` | stop driving DIO2..5 (the master leaves CS, SCK and MOSI driven after each command) |
 | `tramuntana spi write <bytes…>` | send bytes, CS untouched |
 | `tramuntana spi read <n>` | read n bytes (sends 0x00), CS untouched |
 | `tramuntana spi xfer <bytes…>` | full duplex: send bytes, print what came back, CS untouched |

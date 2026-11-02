@@ -105,8 +105,12 @@ for x in decode.spi(cap, mode=0):
 | `uart(cap, pin, baud, bits=8, parity="none", stop_bits=1, invert=False)` | `UartFrame(t_s, value, parity_error, framing_error)` list |
 | `guess_baud(cap, pin)` | standard rate within 6 %, or the raw estimate; `None` with too few edges |
 | `uart_text(frames)` | the characters, non-printables as `\xNN` |
-| `i2c(cap, scl=6, sda=7)` | `I2cTransfer(t_s, message, stopped, partial_bits, scl_hz)` list |
-| `spi(cap, cs=2, sck=5, mosi=4, miso=3, mode=0, lsb_first=False, word_bits=8)` | `SpiTransfer(t_s, mosi, miso, partial_bits, sck_hz, complete)` list; `cs=None` for a bus without CS |
+| `i2c(cap, scl=6, sda=7)` | `I2cTransfer(t_s, message, stopped, partial_bits, scl_hz, bit_rate_hz)` list |
+| `spi(cap, cs=2, sck=5, mosi=4, miso=3, mode=0, lsb_first=False, word_bits=8)` | `SpiTransfer(t_s, mosi, miso, partial_bits, sck_hz, complete, bit_rate_hz)` list; `cs=None` for a bus without CS |
+
+`sck_hz` / `scl_hz` is the bus clock (median period between sampling
+edges); `bit_rate_hz` averages over the whole transfer, so it also counts
+the pauses between bytes and clock stretching.
 | `measure(scope_cap, ch)` | oscilloscope measurements, see [Oscilloscope](06-scope-and-awg.md#measurements) |
 
 Times (`t_s`) are seconds from the trigger.

@@ -945,6 +945,7 @@ async function refreshEmuStatus() {
   $('emu-st-txns').textContent = st.transfers;
   $('emu-st-rw').textContent = `${st.bytesRead} / ${st.bytesWritten}`;
   $('emu-st-naks').textContent = st.naks;
+  $('emu-st-dropped').textContent = st.dropped === undefined ? '-' : st.dropped;
 }
 
 function appendEmuLog(ev) {

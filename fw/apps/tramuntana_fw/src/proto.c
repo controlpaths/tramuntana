@@ -1100,7 +1100,10 @@ static enum proto_status h_emu_status(const uint8_t *p, size_t len, uint8_t *r, 
   wr32(r + 17, st.starts);
   wr32(r + 21, st.stops);
   wr32(r + 25, st.bytes);
-  *rlen = 29;
+  /* since 1.3 */
+  wr32(r + 29, st.dropped);
+  wr32(r + 33, st.late);
+  *rlen = 37;
   return PROTO_OK;
 }
 

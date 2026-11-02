@@ -34,13 +34,31 @@ Both buses use the same model:
 - the register file survives `stop()` and switching between I2C and SPI.
   Load it before or while the emulator runs.
 
+Writes are applied **byte by byte**, as they arrive. A host or a test that
+reads a block of registers while the target is rewriting it can get it
+half-updated (the first bytes new, the rest old): read twice and compare,
+or have the target write a flag register last.
+
 Every transfer is reported as an `EmuTransfer` event: whether the target
 read or wrote, the starting register, and the bytes (up to 32 per event).
+For a read, the bytes are what went out on the bus: on I2C, each byte read
+back from SDA as it was sent; on SPI, the response row the board fed to
+MISO (firmware 1.3; before, the register contents at the time the event
+was logged, which could differ from what the target got).
 An I2C address byte the emulator doesn't answer is reported too (`nak`):
 the address it carried, and whether a START came before it. That tells a
 master talking to the wrong address from a bus that is out of step.
 The [timeline](12-timeline.md) shows them, e.g.
 `emu  I2C 76 W reg F4: 27` / `emu  I2C 76 R reg F7: 51 2a c0`.
+
+Events are **best effort**. The board queues them (64 deep) and sends them
+over USB; a target making thousands of transfers a second outruns that,
+and the extra events are dropped. Since firmware 1.3 nothing is lost
+silently: `status()["dropped"]` counts them, and the next event that gets
+through has `gap=True` (the timeline prints *events dropped before this
+one*). The `transfers`, `bytes_read` and `bytes_written` counters always
+include every transfer, so compare them with the events before concluding
+that a write was lost.
 
 ## 10.3 I2C
 
@@ -56,7 +74,14 @@ The [timeline](12-timeline.md) shows them, e.g.
 low for a moment while its CPU decides whether to ACK and which byte comes
 next. This keeps it correct at any bus speed, but the target's I2C master
 must support clock stretching. Practically all hardware I2C peripherals
-do; some bit-banged masters don't.
+do; some bit-banged masters don't. It also lowers the effective rate: a
+1 MHz master gets about 550 kHz, a 400 kHz one about 300 kHz.
+
+**SDA hold:** when it transmits (ACK bits, read data), the board changes SDA
+about 330 ns after SCL falls, the internal hold time UM10204 asks of a
+device. Firmware before 1.3 changed it 30–140 ns after the edge, which
+made some samplers (this board's own I2C sniffer, logic analyzers) see a
+data bit as a START or a STOP.
 
 Pull-ups: the bus still needs them. The board's own (`pullups=True`) only
 exist on DIO6/DIO7.
@@ -71,7 +96,7 @@ t.emu.i2c(0x76)                                                 # scl=6, sda=7, 
 
 # ... let the target run ...
 
-print(t.emu.status())             # {'bus': 'i2c', 'transfers', 'bytes_read', 'bytes_written', 'naks'}
+print(t.emu.status())             # {'bus': 'i2c', 'transfers', 'bytes_read', 'bytes_written', 'naks', ..., 'dropped', 'late'}
 print(t.emu.regs(0xF2, 4).hex())  # the configuration the firmware wrote
 t.emu.set_regs(0xFA, bytes.fromhex("90 00 00"))                # change the temperature while it runs
 t.emu.stop()
@@ -101,8 +126,8 @@ emu off
 |---|---|
 | Pins | any four DIOs; default DIO2 CS, DIO5 SCK, DIO4 MOSI, DIO3 MISO (wired like the real device) |
 | Modes | 0–3 |
-| Clock | up to 8 MHz in modes 0/2, about 2 MHz in modes 1/3 (see below) |
-| Between transactions | CS high for at least 10 µs |
+| Clock | up to ~7 MHz in modes 0/2, about 2 MHz in modes 1/3 (see below) |
+| Between transactions | CS high for a few µs (see below) |
 
 Each CS-low window starts with a **command byte**. The command format is
 configurable:
@@ -116,7 +141,7 @@ configurable:
 - **Read command:** MISO returns `regs[reg], regs[reg+1]…`, up to 32 bytes.
   Further clocks keep the line at the last bit.
 - **Write command:** the MOSI bytes after the command are written from
-  `reg` on (applied when CS rises).
+  `reg` on, each one as it arrives.
 
 The defaults fit most sensors (bit 7 set = read, 7-bit register). Other
 formats:
@@ -132,10 +157,33 @@ formats:
 **Speed:** the first response bit has to be on MISO half a clock after the
 command byte ends. The board doesn't use the CPU for this: the PIO turns
 the command into the address of a 32-byte row in a precomputed response
-table, and DMA loads the row into the output FIFO. That holds up to
-8 MHz in modes 0/2. In modes 1/3 the first bit is needed sooner, which
-limits them to about 2 MHz. Above that the first response byte comes out
-corrupted, and the rest of the transfer is right.
+table, and DMA loads the row into the output FIFO. Measured against an FPGA
+master (modes 0/2, 250 µs between transactions):
+
+| SCK | Read-back errors |
+|---|---|
+| ≤ 7.14 MHz | none in 25 900 transactions on one run, 1 on another |
+| 8.33 MHz | 50 % |
+| 10 MHz | 94 % |
+| 12.5 MHz | 100 % |
+
+So stay **below about 7 MHz** for zero errors in modes 0/2. When it fails,
+the first data byte is right and the **most significant bit of the bytes
+after it** is wrong (e.g. `1f e0 45 56` arrives as `1f 60 c5 d6`); at
+10 MHz and above more bits go. In modes 1/3 the first bit is needed sooner;
+they passed at 2, 2.94 and 3.85 MHz with a master that leaves about 1.5 bit
+times between bytes, but count on about 2 MHz with one that sends bytes
+back to back.
+
+**Time between transactions:** when CS rises, the board's CPU rearms the
+shifters for the next command. In 14 400 measured transactions that took
+under 2 µs in 99.4 %, under 5 µs in all but two, and about 50 µs at worst
+(when another interrupt was served first). CS high for 60 µs is a safe
+margin; a few µs usually works. Firmware before 1.3 also rebuilt the response table
+there, which kept the emulator deaf for 100–160 µs after a write: a
+transaction that came sooner was lost or answered with garbage. If a CS
+window still starts before the rearm, the board can't tell where its bytes
+begin: it counts it in `status()["late"]` and flags its event `suspect`.
 
 ```python
 t.emu.set_regs(0x00, b"\xe5")                       # ADXL345 DEVID
@@ -174,7 +222,9 @@ The AI tools expose the same functions (`emu_i2c`, `emu_spi`,
 - No delayed answers: the emulator can't simulate a slow device or an
   EEPROM's write cycle (NAK while busy).
 - I2C needs a master that supports clock stretching.
-- SPI: up to 32 bytes per read burst, 10 µs between transactions, and the
-  speed limits above.
+- SPI: up to 32 bytes per read burst, a few µs of CS high between
+  transactions, and the speed limits above.
+- Events are best effort (see [10.2](#102-the-register-model)): at high
+  transfer rates count on `status()`, not on the event log.
 
 [← UART bridge](09-uart-bridge.md) · [Contents](README.md) · [Next: Sequencer →](11-sequencer.md)

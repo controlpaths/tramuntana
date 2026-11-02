@@ -38,6 +38,29 @@ Bulk throughput is about **150 kB/s** whatever the clock, because the
 firmware's SPI driver leaves ~1.5 µs between bytes. The clock rate still
 matters for the target's timing.
 
+**Timing of a `txn`.** CS and the clock are driven by separate steps, so a
+transaction has dead time around the bytes. Measured with the logic
+analyzer (fw 1.3, same at 1 and 8 MHz):
+
+| Interval | Time |
+|---|---|
+| CS low → first SCK edge | 48–54 µs |
+| last byte written → first byte read (SCK stops, CS stays low) | 90–110 µs |
+| last SCK edge → CS high | 27–34 µs (occasionally ~160 µs) |
+
+Targets don't mind (SPI has no timeout), but it shows in captures: the
+decoder's `sck_hz` is the real clock, `bit_rate_hz` the average including
+these pauses. Steps built from `sel`/`write`/`read`/`unsel` add a USB round
+trip (milliseconds) between them.
+
+**The pins stay driven.** After any master call, CS (high), SCK and MOSI
+remain outputs, so CS can stay where you left it between calls. When you
+are done, or before connecting something that drives DIO2..5 itself (a
+target's own SPI master, an FPGA output you want to watch), release them:
+`t.spi.release()`, `tramuntana dio dir 0x3c 0`, or `spi_release` with the
+AI tools. `status()` shows the owner of each pin (`spi` until released).
+The next transfer takes the pins back.
+
 ### From the CLI
 
 ```bash

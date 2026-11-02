@@ -66,7 +66,7 @@ Check that everything works:
 $ tramuntana list
 FA6418C89B553238: shell=/dev/ttyACM0 api=/dev/ttyACM1 uart=/dev/ttyACM2
 $ tramuntana info
-fw_version   1.1.0
+fw_version   1.3.0
 board        tramuntana_lite
 ...
 ```
